@@ -1,0 +1,10 @@
+files_251026/__pycache__
+files_251026/20251016_500_set_HJA_01/
+files_251026/generated_raw_data/
+files_251026/image_stack_cropped_2nd_251024.mat
+files_251026/image_stack_selected_resized_512_060_080.mat
+files_251026/image_stack_selected_resized_512.mat
+test/images/
+test/code/wandb
+test/slack_message_test.py
+test/slack_test.py
