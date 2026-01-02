@@ -1,6 +1,6 @@
 import os
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1" # Or your desired GPU ID
+os.environ["CUDA_VISIBLE_DEVICES"] = "0" # Or your desired GPU ID
 import datetime
 import torch
 import cv2
@@ -44,16 +44,16 @@ print('Device: {}'.format(DEVICE))
 HPARAMS = {
     'BATCH_SIZE': 1, # Start with 1 due to large FFT size
     'NUM_WORKERS': 0, # Start with 0 for easier debugging
-    'IMAGE_PATH': '/home/hotdog/ssd1/depth_imaging/dataset_ssd2/20251028_211643_10000_5/image/0', # 512x512 Scene PNGs
-    'LABEL_PATH': '/home/hotdog/ssd1/depth_imaging/dataset_ssd2/20251028_211643_10000_5/label/0', # 512x512 Depth NPZs
-    'BG_PATH': '/mnt/ssd1/depth_imaging/dataset_ssd1/mirflickr25k/'
+    'IMAGE_PATH': '/home/hotdog/mnt/ssd2/dataset_ssd2/HJA/HJA_data/20251230_152424_20000_8/image/0', # 576x1024 Scene PNGs
+    'LABEL_PATH': '/home/hotdog/mnt/ssd2/dataset_ssd2/HJA/HJA_data/20251230_152424_20000_8/label/0', # 576x1024 Depth NPZs
+    'BG_PATH': '/home/hotdog/mnt/ssd1/depth_imaging/dataset_ssd1/mirflickr25k/'
 }
 background_level_max = 0.5 # Max background intensity relative to object
 
 TPARAMS = {}
 
 # --- Quantization Setup ---
-quantize_num = 21 # Explicitly set based on the new PSF stack
+quantize_num = 20 # Explicitly set based on the new PSF stack
 print(f"Using quantize_num = {quantize_num}")
 # Create thresholds for quantization (0.0 to 1.0 in quantize_num+1 steps)
 # These will be used inside quantize_rgb_by_depth
