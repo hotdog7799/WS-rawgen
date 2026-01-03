@@ -30,28 +30,118 @@ import time
 import random
 
 # --- Argument Parser (Simplified) ---
-parser = argparse.ArgumentParser(description="Raw image generator for lensless camera")
-parser.add_argument('--psf_path', type=str, required=True, help='Path to the .mat PSF stack file (21x512x512)')
-parser.add_argument('--save_path', type=str, required=True, help='Path to save the generated raw data')
-parser.add_argument('--data_idx', nargs=2, type=int, required=False, default=[0, 10000], help='Start and end index (exclusive) of data to process (e.g., 0 500)')
+# parser = argparse.ArgumentParser(description="Raw image generator for lensless camera")
+# parser.add_argument('--psf_path', type=str, required=True, help='Path to the .mat PSF stack file (21x512x512)')
+# parser.add_argument('--save_path', type=str, required=True, help='Path to save the generated raw data')
+# parser.add_argument('--data_idx', nargs=2, type=int, required=False, default=[0, 10000], help='Start and end index (exclusive) of data to process (e.g., 0 500)')
 
-args = parser.parse_args()
+# args = parser.parse_args()
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 print('Device: {}'.format(DEVICE))
 
 # --- HPARAMS (Simplified Paths) ---
 HPARAMS = {
-    'BATCH_SIZE': 1, # Start with 1 due to large FFT size
-    'NUM_WORKERS': 0, # Start with 0 for easier debugging
     'IMAGE_PATH': '/home/hotdog/mnt/ssd2/dataset_ssd2/HJA/HJA_data/20251230_152424_20000_8/image/0', # 576x1024 Scene PNGs
     'LABEL_PATH': '/home/hotdog/mnt/ssd2/dataset_ssd2/HJA/HJA_data/20251230_152424_20000_8/label/0', # 576x1024 Depth NPZs
-    'BG_PATH': '/home/hotdog/mnt/ssd1/depth_imaging/dataset_ssd1/mirflickr25k/'
+    'BG_PATH': '/home/hotdog/mnt/ssd1/depth_imaging/dataset_ssd1/mirflickr25k/',
+    'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/251223_HJC/gray_center_psf/",
+    'SAVE_PATH': "/home/hjahn/mnt/ssd2/dataset_ssd2/HJA/HJA_data/syn_raw_image/",
+    'BATCH_SIZE': 1, # Start with 1 due to large FFT size
+    'NUM_WORKERS': 0, # Start with 0 for easier debugging
+    'SCENE_SIZE': (576,1024),
+    'FFT_SIZE': (1152, 2048),
+    'QUANTIZE_NUM': 20,
 }
 background_level_max = 0.5 # Max background intensity relative to object
 
 TPARAMS = {}
 
+PSF_FILE_LIST = [ # 20개
+    "05p0.png", "05p2.png", "05p4.png", "05p6.png", "05p8.png",
+    "06p0.png", "06p1.png", "06p4.png", "06p6.png", "06p8.png",
+    "07p0.png", "07p2.png", "07p4.png", "07p8.png", "08p1.png",
+    "08p3.png", "08p7.png", "09p0.png", "09p4.png", "09p9.png",
+]
+
+# 4. Super-Gaussian Mask 생성 함수 (Torch 버전)
+def get_super_gaussian_mask(shape, sigma=50, order=4, device='cuda'):
+    Hp, Wp = shape
+    y = torch.linspace(-1, 1, Hp, device=device)
+    x = torch.linspace(-1, 1, Wp, device=device)
+    Y, X = torch.meshgrid(y, x, indexing='ij')
+
+    aspect_ratio = Wp / Hp
+    X_scaled = X / (sigma / 100.0)
+    Y_scaled = Y * aspect_ratio / (sigma / 100.0)
+
+    R2 = X_scaled**2 + Y_scaled**2
+    mask = torch.exp(-(R2**(order / 2)))
+    return mask / mask.max()
+
+# --- PSF 로더 (개별 PNG 로드 및 정규화) ---
+def load_psf_stack(psf_dir, file_list, target_size, device='cuda'):
+    psf_stack = []
+    for fname in file_list:
+        path = os.path.join(psf_dir, fname)
+        psf_img = Image.open(path).convert('L') # Monochromatic
+        psf_np = np.array(psf_img).astype(np.float32)
+        psf_tensor = torch.from_numpy(psf_np).to(device)
+        
+        # 크기가 다를 경우 리사이즈
+        if psf_tensor.shape != target_size:
+            psf_tensor = F.interpolate(psf_tensor.unsqueeze(0).unsqueeze(0), 
+                                     size=target_size, mode='bilinear').squeeze()
+            
+        # 에너지 정규화 (중요)
+        psf_tensor /= torch.sum(psf_tensor)
+        psf_stack.append(psf_tensor)
+        
+    return torch.stack(psf_stack).unsqueeze(1) # (20, 1, H, W)
+
+# --- 수정된 Forward Model (Super-Gaussian 적용) ---
+def simul_raw_generation_torch_v2(psf_stack, scene_stack, hparams, device='cuda'):
+    # psf_stack: (20, 1, 576, 1024), scene_stack: (B, 3, 20, 576, 1024)
+    B, C, D, H, W = scene_stack.shape
+    fft_h, fft_w = hparams['FFT_SIZE']
+    
+    # Super-Gaussian Mask 생성
+    fade_mask = get_super_gaussian_mask((fft_h, fft_w), sigma=50, order=4, device=device)
+    
+    raw_accum = torch.zeros((B, C, H, W), device=device)
+    
+    for d in range(D):
+        curr_scene = scene_stack[:, :, d, :, :] # (B, 3, 576, 1024)
+        curr_psf = psf_stack[d, :, :, :]       # (1, 576, 1024)
+        
+        # 1. Replicate Padding
+        # 상하좌우 각각 50%씩 패딩하여 2배 크기로 만듦 (Linear Conv 모사)
+        pad_h, pad_w = H // 2, W // 2
+        scene_padded = F.pad(curr_scene, (pad_w, pad_w, pad_h, pad_h), mode='replicate')
+        psf_padded = F.pad(curr_psf.unsqueeze(0), (pad_w, pad_w, pad_h, pad_h), mode='constant', value=0)
+        
+        # 2. Super-Gaussian Fade 적용 (Boundary Artifact 억제)
+        # 사용자님의 'recon.py' 전략: 양쪽에 모두 마스크를 씌워 줌
+        scene_faded = scene_padded * fade_mask
+        psf_faded = psf_padded * fade_mask
+        
+        # 3. FFT Convolution
+        scene_fft = torch.fft.rfft2(scene_faded)
+        psf_fft = torch.fft.rfft2(psf_faded, s=(fft_h, fft_w))
+        
+        raw_fft = scene_fft * psf_fft
+        raw_faded = torch.fft.irfft2(raw_fft, s=(fft_h, fft_w))
+        raw_faded = torch.fft.ifftshift(raw_faded, dim=(-2, -1))
+        
+        # 4. Center Crop (576, 1024)
+        raw_cropped = raw_faded[:, :, pad_h:pad_h+H, pad_w:pad_w+W]
+        raw_accum += raw_cropped
+        
+    return torch.clamp(raw_accum, 0, 1)
+
+#--------------------------------------------
+
+#---below is the original code----
 # --- Quantization Setup ---
 quantize_num = 20 # Explicitly set based on the new PSF stack
 print(f"Using quantize_num = {quantize_num}")
@@ -301,9 +391,9 @@ def train_batch(train_parameters, trainset_loader):
     quantize_num_local = quantize_num # Use the global variable (21)
 
     # --- Save Path Setup ---
-    save_raw_path = os.path.join(args.save_path, 'train', 'raw')
-    save_img_path = os.path.join(args.save_path, 'train', 'image')
-    save_lbl_path = os.path.join(args.save_path, 'train', 'label')
+    save_raw_path = os.path.join(HPARAMS['SAVE_PATH'], 'train', 'raw')
+    save_img_path = os.path.join(HPARAMS['SAVE_PATH'], 'train', 'image')
+    save_lbl_path = os.path.join(HPARAMS['SAVE_PATH'], 'train', 'label')
     os.makedirs(save_raw_path, exist_ok=True)
     os.makedirs(save_img_path, exist_ok=True)
     os.makedirs(save_lbl_path, exist_ok=True)
