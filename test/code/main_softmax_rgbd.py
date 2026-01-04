@@ -42,37 +42,28 @@ print('Device: {}'.format(DEVICE))
 HPARAMS = {
     'IN_CHANNEL' : 3,
     # 'OUT_CHANNEL': 42,
-    'OUT_CHANNEL': 21,
+    'OUT_CHANNEL': 51, # 지금은 뎁스를 51개의 PSF로 쓰므로
     'BATCH_SIZE': 8,
     'NUM_WORKERS': 16,
-    'TRAINSET_SIZE' : 9000,
+    'TRAINSET_SIZE' : 18000, # synthetic dataset 20000장
     'EPOCHS_NUM': 1000,
     'LR': 5e-4,
     
-   
+    # raw image 2만장 있는 디렉토리: "/home/hjahn/mnt/ssd2/dataset_ssd2/HJA/HJA_data/syn_raw_image/0104_113023/raw/0/"
+    # 그러면 이걸 train set과 test set으로 나누어야 하나?
+
+    # 여기 밑에 있는 디렉토리는 다 예전에 내가 작업하던 경로들
     'TRAIN_PATH': '/mnt/ssd1/depth_imaging/dataset_ssd2/HJA_data/06-08/512x512/train/raw/',
-    
-    
-    
-    
     'TRAIN_LABEL_PATH_COLOR': '/mnt/ssd1/depth_imaging/dataset_ssd2/HJA_data/06-08/512x512/train/image/',
-    
-    
     'TRAIN_LABEL_PATH': '/mnt/ssd1/depth_imaging/dataset_ssd2/HJA_data/06-08/512x512/train/label/',
-
+    # 나는 사용하지 않았던 낙규형의 test directory
     'TEST_PATH': '/mnt/ssd1/depth_imaging/dataset_ssd1/current_blender_dataset/20240909_testdataset_210obj_2X_FOV_6K_clipping_0.1_1100_cm_random_select_from_5_to_20_obj_scale_from_0.5_to_1.5_resize_add_linear_scale_y_l_10_65/v14_poission_disk_avgdist_140um_[real_210um]_with_simulated_2xPSF_in_250429_and_250408_modified_angular_response_250519_masked_rgb_png_raw_AWGN_mean_0_rand_std_0_to_0.01/',
-    
-    
     'TEST_LABEL_PATH_COLOR': '/mnt/ssd1/depth_imaging/dataset_ssd1/current_blender_dataset/20240909_testdataset_210obj_2X_FOV_6K_clipping_0.1_1100_cm_random_select_from_5_to_20_obj_scale_from_0.5_to_1.5_resize_add_linear_scale_y_l_10_65/image_gss_masked_png/',
-    
-    
     'TEST_LABEL_PATH': '/mnt/ssd1/depth_imaging/dataset_ssd1/current_blender_dataset/20240909_testdataset_210obj_2X_FOV_6K_clipping_0.1_1100_cm_random_select_from_5_to_20_obj_scale_from_0.5_to_1.5_resize_add_linear_scale_y_l_10_65/label_cc/',
-
-    
+    # 이 validation path도 사용하지 않았음
     'VAL_PATH': '/mnt/ssd1/depth_imaging/dataset_ssd1/current_realworld_dataset/20250429_validation_selected_batch_10/',
     'PSF_PATH': '/home/hotdog/files_251026/image_stack_selected_resized_512_060_080.mat',
 
-    
     'WEIGHT_SAVE': True,
     'WANDB_LOG': True,
     'SLACK_ALERT': False,
@@ -81,7 +72,6 @@ HPARAMS = {
     'FIG_SAVE_PATH' : '/home/hotdog/',
     
     'CHECKPOINT_PATH': '',
-
 }
 
 # Check if the weight save path and fig save path exist, if not create them
