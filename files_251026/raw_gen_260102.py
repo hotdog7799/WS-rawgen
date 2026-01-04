@@ -23,15 +23,15 @@ HPARAMS = {
     'BG_PATH': '/home/hjahn/mnt/ssd1/depth_imaging/dataset_ssd1/mirflickr25k/',
     'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/251223_HJC/gray_center_psf/",
     'SAVE_PATH': "/home/hjahn/mnt/ssd2/dataset_ssd2/HJA/HJA_data/syn_raw_image/",
-    'BATCH_SIZE': 1, # Start with 1 due to large FFT size
-    'NUM_WORKERS': 0, # Start with 0 for easier debugging
+    'BATCH_SIZE': 4, # Start with 1 due to large FFT size
+    'NUM_WORKERS': 8, # Start with 0 for easier debugging
     'SCENE_SIZE': (576,1024),
     'FFT_SIZE': (1152, 2048),
     'QUANTIZE_NUM': 20,
 }
 
 # 현재 시간 → YYYYMMDD_HHMM 형식으로 문자열 생성
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+timestamp = datetime.now().strftime("%Y%m%d_%HH%MM")
 # SAVE_PATH 뒤에 붙이기
 HPARAMS['SAVE_PATH'] = os.path.join(HPARAMS['SAVE_PATH'], timestamp)
 
@@ -79,7 +79,7 @@ def load_psf_stack(psf_dir, file_list, target_size, device='cuda'):
 
 # --- 4. Quantization & Forward Model (Linear Convolution) ---
 def quantize_and_simulate(image, label, bg_img, psf_stack, hparams, fade_mask, device='cuda'):
-    print("quantize and simulation start.\nscene shape: ",image.shape)
+    # print("quantize and simulation start.\nscene shape: ",image.shape)
     B, C, H, W = image.shape
     D = hparams['QUANTIZE_NUM']
     fft_h, fft_w = hparams['FFT_SIZE']
@@ -147,14 +147,14 @@ def main():
     lbl_files = sorted(glob(os.path.join(HPARAMS['LABEL_PATH'], '*.npz')))
     bg_files = sorted(glob(os.path.join(HPARAMS['BG_PATH'], '*.jpg')))
 
-    # --- 테스트용: 5개만 선택 ---
-    img_files = img_files[:5]
-    lbl_files = lbl_files[:5]
-    print(f"Testing with {len(img_files)} scenes...")
-    # --- 테스트용: 5개만 선택 ---
+    # # --- 테스트용: 5개만 선택 ---
+    # img_files = img_files[:5]
+    # lbl_files = lbl_files[:5]
+    # print(f"Testing with {len(img_files)} scenes...")
+    # # --- 테스트용: 5개만 선택 ---
 
     dataset = SceneDataset(img_files, lbl_files)
-    loader = DataLoader(dataset, batch_size=HPARAMS['BATCH_SIZE'], num_workers=HPARAMS['NUM_WORKERS'], shuffle=False)
+    loader = DataLoader(dataset, batch_size=HPARAMS['BATCH_SIZE'], num_workers=HPARAMS['NUM_WORKERS'], shuffle=False,pin_memory=True)
 
     print(f"Starting simulation for {len(dataset)} scenes...")
     
