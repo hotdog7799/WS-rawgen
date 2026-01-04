@@ -23,7 +23,7 @@ HPARAMS = {
     'BG_PATH': '/home/hjahn/mnt/ssd1/depth_imaging/dataset_ssd1/mirflickr25k/',
     'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/251223_HJC/gray_center_psf/",
     'SAVE_PATH': "/home/hjahn/mnt/nas/Research/HJA/",
-    'BATCH_SIZE': 4, # Start with 1 due to large FFT size
+    'BATCH_SIZE': 32, # Start with 1 due to large FFT size
     'NUM_WORKERS': 16, # Start with 0 for easier debugging
     'SCENE_SIZE': (576,1024),
     'FFT_SIZE': (1152, 2048),
@@ -48,19 +48,6 @@ PSF_FILE_LIST = [ # 20개
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-# --- 2. Super-Gaussian Mask (recon.py 로직 기반) ---
-# def get_super_gaussian_mask(shape, sigma=50, order=2, device='cuda'):
-#     Hp, Wp = shape
-#     y = torch.linspace(-1, 1, Hp, device=device)
-#     x = torch.linspace(-1, 1, Wp, device=device)
-#     Y, X = torch.meshgrid(y, x, indexing='ij')
-#     aspect_ratio = Wp / Hp
-#     X_scaled = X / (sigma / 100.0)
-#     Y_scaled = Y * aspect_ratio / (sigma / 100.0)
-#     R2 = X_scaled**2 + Y_scaled**2
-#     mask = torch.exp(-(R2**(order / 2)))
-#     return (mask / mask.max()).unsqueeze(0).unsqueeze(0) # (1, 1, H, W)
-
 # --- 3. PSF 로드 및 정규화 (에너지 보존) ---
 def load_psf_stack(psf_dir, file_list, target_size, device='cuda'):
     print("loading psf stack")
@@ -77,9 +64,8 @@ def load_psf_stack(psf_dir, file_list, target_size, device='cuda'):
         psf_tensor /= (torch.sum(psf_tensor) + 1e-8) # L1 Normalization 
         psf_stack.append(psf_tensor)
     # print("psf stack shape: ",psf_stack.shape)
-    return torch.stack(psf_stack).unsqueeze(1) # (20, 1, H, W) 
+    return torch.stack(psf_stack).unsqueeze(1) # (D, 1, H, W) 
 
-# --- 4. Quantization & Forward Model (Linear Convolution) ---
 # --- 4. Quantization & Forward Model (수정된 버전) ---
 def quantize_and_simulate(image, label, bg_img, psf_stack, hparams, device='cuda'):
     B, C, H, W = image.shape
