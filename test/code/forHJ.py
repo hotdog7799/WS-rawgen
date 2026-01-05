@@ -7,12 +7,13 @@ import torch.nn.functional as F
 import sys
 import torchvision
 from einops import rearrange
+from torch.utils.checkpoint import checkpoint
 
 def exists(x):
     return x is not None
 
 class MWDNet_CPSF_depth(nn.Module):
-    def __init__(self, n_channels, n_classes, psf, channels=64, height=336, width=336, depth=3, dim=32):
+    def __init__(self, n_channels, n_classes, psf, channels=64, height=256, width=256, depth=3, dim=32):
         super(MWDNet_CPSF_depth, self).__init__()
         self.in_channels = n_channels
         self.out_channels = n_classes
@@ -69,10 +70,16 @@ class MWDNet_CPSF_depth(nn.Module):
         psf3 = self.down22(psf2)
         psf4 = self.down33(psf3)
 
-        x1 = self.w1(x1, psf1)
-        x2 = self.w2(x2, psf2)
-        x3 = self.w3(x3, psf3)
-        x4 = self.w4(x4, psf4)
+        # x1 = self.w1(x1, psf1)
+        # x2 = self.w2(x2, psf2)
+        # x3 = self.w3(x3, psf3)
+        # x4 = self.w4(x4, psf4)
+
+        # checkpoint를 쓰면 이 무거운 연산의 중간 결과들이 메모리에서 해제됩니다.
+        x1 = checkpoint(self.w1, x1, psf1, use_reentrant=False)
+        x2 = checkpoint(self.w2, x2, psf2, use_reentrant=False)
+        x3 = checkpoint(self.w3, x3, psf3, use_reentrant=False)
+        x4 = checkpoint(self.w4, x4, psf4, use_reentrant=False)
 
         x = self.up1(x5, x4)
         x = self.up2(x, x3)
@@ -86,74 +93,78 @@ class MWDNet_CPSF_depth(nn.Module):
         return intensity, x
 
 class W2(nn.Module):
-    """
-    'W' 클래스를 기반으로, WieNer_SV(멀티 커널, k 차원, kernel_weights 등) 기능을 결합하되
-    추가적인 패딩 없이 FFT를 수행하는 예시.
-    
-    Args:
-        channels (int): 입력/출력 채널 수
-        height (int): 이미지 높이(H)
-        width (int):  이미지 너비(W)
-        k (int): 추가로 사용할 PSF(또는 ROI) 개수
-    """
     def __init__(self, channels, height, width, height_p, width_p, k=1):
         super(W2, self).__init__()
-        self.height_freq = height + height_p
-        self.width_freq = (width + width_p)// 2 + 1
-
-        self.psf_weights = nn.Parameter(
-            torch.ones(k, channels, self.height_freq, self.width_freq) * 0.01
-        )
-        self.group_norm = nn.GroupNorm(num_groups=1, num_channels=channels)
-
-        self.alpha = nn.Parameter(torch.ones(k, 1, 1, 1) * 0.1)
+        self.h, self.w = height, width
+        self.h_p, self.w_p = height_p, width_p
         
+        # FFT 크기 계산
+        self.height_freq = height + height_p
+        self.width_freq = (width + width_p) // 2 + 1
+
+        # 기본 채널(32, 64 등)에 대한 가중치 생성
+        # self.psf_weights = nn.Parameter(
+        #     torch.ones(k, channels, self.height_freq, self.width_freq) * 0.01
+        # )
+        # 기존: self.psf_weights = nn.Parameter(torch.ones(k, channels, h_freq, w_freq) * 0.01)
+        # 수정: 공간 정보를 1x1로 줄임 (채널별 노이즈 억제 수치만 학습)
+        self.psf_weights = nn.Parameter(torch.ones(k, channels, 1, 1) * 0.01)
+        self.group_norm = nn.GroupNorm(num_groups=1, num_channels=channels)
+        self.alpha = nn.Parameter(torch.ones(k, 1, 1, 1) * 0.1)
         self.relu = nn.ReLU()
         self.k = k
 
     def forward(self, raw: torch.Tensor, psf: torch.Tensor, epsilon=1e-6) -> torch.Tensor:
-        """
-        Args:
-            raw (torch.Tensor): (B, C, H, W) 형태의 입력
-            psf (torch.Tensor): (B, C, H_p, W_p) 형태의 PSF (혹은 동일 크기 H, W일 수도 있음)
-            epsilon (float): Regularization 파라미터
-        
-        Returns:
-            torch.Tensor: (B, C, H, W) 형태의 복원 결과
-        """
+        # raw: (B, 32, H, W), psf: (51, 32, H_p, W_p)
         B, C, H, W = raw.shape
-        _, _, H_p, W_p = psf.shape
+        D, C_p, H_p, W_p = psf.shape # D=51, C_p=32
         
-        psf = psf.reshape(self.k,-1,psf.size(-2),psf.size(-1))
-        psf_sum = psf.sum(dim=(-2, -1), keepdim=True)          # (B, C, 1, 1)
-        psf_normalized = psf / (psf_sum.abs() * self.alpha + 1e-12)
+        # 1. PSF 정규화 (D, C, H, W 유지)
+        psf_sum = psf.sum(dim=(-2, -1), keepdim=True)
+        psf_normalized = psf / (psf_sum.abs() * self.alpha.to(psf.device) + 1e-12)
         
-        # Apply symmetric padding to raw input
-        raw_padded = F.pad(
-            raw,
-            (W_p // 2, W_p - W_p // 2, H_p // 2, H_p - H_p // 2),
-            mode='replicate'
-        )
-        raw_padded = gaus_t(raw_padded, fwhm=2)
-        psf_padded = F.pad(
-            psf_normalized,
-            (W // 2, W - W // 2, H // 2, H - H // 2),
-            mode='constant'
-        )
+        # 2. 패딩
+        raw_padded = F.pad(raw, (W_p // 2, W_p - W_p // 2, H_p // 2, H_p - H_p // 2), mode='replicate')
+        # raw_padded = gaus_t(raw_padded, fwhm=2)
         
-        # Compute FFT with 'ortho' normalization to maintain energy
-        raw_fft = torch.fft.rfft2(raw_padded, dim=(-2, -1))  # Shape: (B, C, H_freq, W_freq)
-        psf_fft = torch.fft.rfft2(psf_padded, s=(raw_padded.size(-2), raw_padded.size(-1)), dim=(-2, -1))  # Shape: (B, C, H_freq, W_freq)
+        # PSF 패딩 (H, W 크기에 맞춰서 패딩)
+        psf_padded = F.pad(psf_normalized, (W // 2, W - W // 2, H // 2, H - H // 2), mode='constant')
         
-        pw = self.relu(self.psf_weights)
-        wiener_filter = psf_fft.conj() / (psf_fft.abs()**2 + epsilon + pw)
-        out_fft = raw_fft * wiener_filter  # (k, B, C, H, W//2+1)
+        # 3. FFT 수행
+        target_fft_size = (raw_padded.size(-2), raw_padded.size(-1))
+        raw_fft = torch.fft.rfft2(raw_padded, dim=(-2, -1)) # (B, 32, H_f, W_f)
+        psf_fft = torch.fft.rfft2(psf_padded, s=target_fft_size, dim=(-2, -1)) # (51, 32, H_f, W_f)
+        
+        # 4. [에러 해결 지점] pw 채널 확장
+        # pw = self.relu(self.psf_weights) # (1, 32, H_f, W_f)
+        pw = F.softplus(self.psf_weights)
+        
+        # psf_fft의 주파수 크기(257 등)에 맞춰 슬라이싱
+        if pw.shape[-1] != psf_fft.shape[-1]:
+            pw = pw[..., :psf_fft.shape[-2], :psf_fft.shape[-1]]
+            
+        # [핵심] psf_fft가 51개 레이어를 가질 때 pw를 해당 레이어만큼 반복 확장
+        # (1, 32, H, W) -> (51, 32, H, W)
+        if psf_fft.shape[0] != pw.shape[0]:
+            pw = pw.expand(psf_fft.shape[0], -1, -1, -1)
+
+        # 5. Wiener Filter 계산 (이제 51, 32 채널 모두 일치)
+        denom = psf_fft.abs()**2 + epsilon + pw
+        wiener_filter = psf_fft.conj() / denom # (51, 32, H_f, W_f)
+        
+        # 6. 복원 연산 (Batch와 Depth 레이어를 결합하여 효율적으로 처리)
+        # raw_fft: (B, 32, H_f, W_f), wiener_filter: (51, 32, H_f, W_f)
+        # 결과: (51, B, 32, H_f, W_f) -> 메모리를 위해 평균을 내거나 차원 축소
+        out_fft = raw_fft.unsqueeze(0) * wiener_filter.unsqueeze(1) 
+        
+        # 메모리 절약을 위해 깊이(51) 차원에 대해 가중 합산 또는 평균
+        out_fft = out_fft.mean(dim=0) # (B, 32, H_f, W_f)
 
         out_spatial = torch.fft.irfft2(out_fft, dim=(-2, -1))
         out_spatial = torch.fft.ifftshift(out_spatial, dim=(-2, -1))
-        start_H = H_p // 2
-        start_W = W_p // 2
-        out_cropped = out_spatial[..., start_H:start_H + H, start_W:start_W + W]  # Shape: (N, B, C, H, W)
+        
+        start_H, start_W = H_p // 2, W_p // 2
+        out_cropped = out_spatial[..., start_H:start_H + H, start_W:start_W + W]
 
         return self.group_norm(out_cropped.real)
 

@@ -56,13 +56,13 @@ def get_depth_range():
     # np.arange(25.0, 34.0, 2.0), # 25.0 to 33.0 with step 2.0
     # [36.0, 38.0, 45.0, 50.0, 55.0, 60.0, 70.0] # Additional values
     # )) # avg dist 140 um poission random dot 20250103
-    wd_blender = np.linspace(5.0, 8.0, 31)
-    wd_measured = np.linspace(5.0, 8.0, 31)
+    wd_blender = np.linspace(5.0, 10.0, 51)
+    wd_measured = np.linspace(5.0, 10.0, 51)
     
     
     # depth value measure by blender environment
     # depth_value = [0, 0.0769231, 0.230769, 0.384615, 0.537981, 0.691827, 0.846154, 1] # 20240420, inverted
-    depth_value = np.linspace(0.0, 1.0, 21)  # 하드코딩
+    depth_value = np.linspace(0.0, 1.0, 51)  # 하드코딩
     # depth_value = np.linspace(0.0, 1.0, n_depth_levels)
     
     # Interpolate depth values for wd_measured using wd_blender and depth_value
@@ -78,8 +78,22 @@ def PSNR(img1, img2):
         return "Same Image"
     return 10 * torch.log10(1. / mse)
 
+# def npz_loader(path):
+#     sample = torch.from_numpy(np.load(path)['dmap'])
+#     return sample.float()
 def npz_loader(path):
-    sample = torch.from_numpy(np.load(path)['label'])
+    # 1. 파일 로드
+    sample = np.load(path)['dmap']
+    sample = torch.from_numpy(sample).float() # (H, W)
+    
+    # 2. 채널 차원 추가 (H, W) -> (1, H, W)
+    if len(sample.shape) == 2:
+        sample = sample.unsqueeze(0)
+    
+    # 3. [핵심] 정답 라벨도 모델 입력과 똑같이 256x256으로 리사이즈
+    # Loss 계산 시 차원을 맞추기 위해 반드시 필요합니다.
+    sample = F.interpolate(sample.unsqueeze(0), size=(256, 256), mode='bilinear', align_corners=False).squeeze(0)
+    
     return sample
 
 def npy_loader(path):
