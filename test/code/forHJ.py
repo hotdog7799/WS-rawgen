@@ -98,75 +98,80 @@ class W2(nn.Module):
         self.h, self.w = height, width
         self.h_p, self.w_p = height_p, width_p
         
-        # FFT 크기 계산
         self.height_freq = height + height_p
         self.width_freq = (width + width_p) // 2 + 1
 
-        # 기본 채널(32, 64 등)에 대한 가중치 생성
-        # self.psf_weights = nn.Parameter(
-        #     torch.ones(k, channels, self.height_freq, self.width_freq) * 0.01
-        # )
-        # 기존: self.psf_weights = nn.Parameter(torch.ones(k, channels, h_freq, w_freq) * 0.01)
-        # 수정: 공간 정보를 1x1로 줄임 (채널별 노이즈 억제 수치만 학습)
+        # psf_weights를 1x1로 유지하여 메모리 절약
         self.psf_weights = nn.Parameter(torch.ones(k, channels, 1, 1) * 0.01)
         self.group_norm = nn.GroupNorm(num_groups=1, num_channels=channels)
         self.alpha = nn.Parameter(torch.ones(k, 1, 1, 1) * 0.1)
-        self.relu = nn.ReLU()
         self.k = k
 
-    def forward(self, raw: torch.Tensor, psf: torch.Tensor, epsilon=1e-6) -> torch.Tensor:
-        # raw: (B, 32, H, W), psf: (51, 32, H_p, W_p)
-        B, C, H, W = raw.shape
-        D, C_p, H_p, W_p = psf.shape # D=51, C_p=32
-        
-        # 1. PSF 정규화 (D, C, H, W 유지)
-        psf_sum = psf.sum(dim=(-2, -1), keepdim=True)
-        psf_normalized = psf / (psf_sum.abs() * self.alpha.to(psf.device) + 1e-12)
-        
-        # 2. 패딩
-        raw_padded = F.pad(raw, (W_p // 2, W_p - W_p // 2, H_p // 2, H_p - H_p // 2), mode='replicate')
-        # raw_padded = gaus_t(raw_padded, fwhm=2)
-        
-        # PSF 패딩 (H, W 크기에 맞춰서 패딩)
-        psf_padded = F.pad(psf_normalized, (W // 2, W - W // 2, H // 2, H - H // 2), mode='constant')
-        
-        # 3. FFT 수행
-        target_fft_size = (raw_padded.size(-2), raw_padded.size(-1))
-        raw_fft = torch.fft.rfft2(raw_padded, dim=(-2, -1)) # (B, 32, H_f, W_f)
-        psf_fft = torch.fft.rfft2(psf_padded, s=target_fft_size, dim=(-2, -1)) # (51, 32, H_f, W_f)
-        
-        # 4. [에러 해결 지점] pw 채널 확장
-        # pw = self.relu(self.psf_weights) # (1, 32, H_f, W_f)
-        pw = F.softplus(self.psf_weights)
-        
-        # psf_fft의 주파수 크기(257 등)에 맞춰 슬라이싱
-        if pw.shape[-1] != psf_fft.shape[-1]:
-            pw = pw[..., :psf_fft.shape[-2], :psf_fft.shape[-1]]
+    def forward(self, raw: torch.Tensor, psf: torch.Tensor, epsilon=1e-4) -> torch.Tensor:
+        # [핵심] 수치 안정성을 위해 float32 강제 사용
+        with torch.cuda.amp.autocast(enabled=False):
+            raw = raw.float()
+            psf = psf.float()
+            B, C, H, W = raw.shape
+            D = psf.shape[0] # 51
             
-        # [핵심] psf_fft가 51개 레이어를 가질 때 pw를 해당 레이어만큼 반복 확장
-        # (1, 32, H, W) -> (51, 32, H, W)
-        if psf_fft.shape[0] != pw.shape[0]:
-            pw = pw.expand(psf_fft.shape[0], -1, -1, -1)
+            # 1. PSF 정규화
+            psf_sum = psf.sum(dim=(-2, -1), keepdim=True).abs() + 1e-8
+            psf_normalized = psf / psf_sum
+            
+            # 2. 패딩 (Replicate 모드)
+            raw_padded = F.pad(raw, (self.w_p // 2, self.w_p - self.w_p // 2, 
+                                     self.h_p // 2, self.h_p - self.h_p // 2), mode='replicate')
+            
+            # 3. FFT 수행 (Raw 이미지만 먼저)
+            raw_fft = torch.fft.rfft2(raw_padded, dim=(-2, -1)) # (B, C, H_f, W_f)
+            target_fft_size = (raw_padded.size(-2), raw_padded.size(-1))
+            
+            # 4. [메모리 절약 핵심] 뎁스 방향 분할 연산
+            # 51개를 한꺼번에 복원하면 메모리가 터지므로, 루프를 돌며 합산합니다.
+            chunk_size = 8 # 메모리 상황에 따라 4~16 조절
+            accumulated_fft = torch.zeros_like(raw_fft)
+            
+            pw_all = F.softplus(self.psf_weights.float()) # (k, C, 1, 1)
 
-        # 5. Wiener Filter 계산 (이제 51, 32 채널 모두 일치)
-        denom = psf_fft.abs()**2 + epsilon + pw
-        wiener_filter = psf_fft.conj() / denom # (51, 32, H_f, W_f)
-        
-        # 6. 복원 연산 (Batch와 Depth 레이어를 결합하여 효율적으로 처리)
-        # raw_fft: (B, 32, H_f, W_f), wiener_filter: (51, 32, H_f, W_f)
-        # 결과: (51, B, 32, H_f, W_f) -> 메모리를 위해 평균을 내거나 차원 축소
-        out_fft = raw_fft.unsqueeze(0) * wiener_filter.unsqueeze(1) 
-        
-        # 메모리 절약을 위해 깊이(51) 차원에 대해 가중 합산 또는 평균
-        out_fft = out_fft.mean(dim=0) # (B, 32, H_f, W_f)
+            for i in range(0, D, chunk_size):
+                end_i = min(i + chunk_size, D)
+                psf_chunk = psf_normalized[i:end_i] # (chunk, C, H_p, W_p)
+                
+                # Chunk PSF 패딩 및 FFT
+                psf_padded_chunk = F.pad(psf_chunk, (W // 2, W - W // 2, H // 2, H - H // 2), mode='constant', value=0)
+                psf_fft_chunk = torch.fft.rfft2(psf_padded_chunk, s=target_fft_size, dim=(-2, -1))
+                
+                # Wiener Filter 계산
+                # pw를 현재 chunk 크기에 맞춰 확장
+                pw_chunk = pw_all.expand(psf_fft_chunk.shape[0], -1, -1, -1)
+                if pw_chunk.shape[-1] != psf_fft_chunk.shape[-1]:
+                    pw_chunk = pw_chunk[..., :psf_fft_chunk.shape[-1]]
+                
+                denom = psf_fft_chunk.abs()**2 + pw_chunk + epsilon
+                wiener_filter = psf_fft_chunk.conj() / (denom + 1e-8)
+                
+                # 필터링 후 합산 (Mean을 내기 위해 합산 후 나중에 D로 나눔)
+                # raw_fft: (B, C, Hf, Wf), wiener: (chunk, C, Hf, Wf)
+                res_chunk = raw_fft.unsqueeze(0) * wiener_filter.unsqueeze(1) # (chunk, B, C, Hf, Wf)
+                accumulated_fft += res_chunk.sum(dim=0)
+                
+                # 캐시 비우기 (매우 중요)
+                del psf_padded_chunk, psf_fft_chunk, wiener_filter, res_chunk
 
-        out_spatial = torch.fft.irfft2(out_fft, dim=(-2, -1))
-        out_spatial = torch.fft.ifftshift(out_spatial, dim=(-2, -1))
-        
-        start_H, start_W = H_p // 2, W_p // 2
-        out_cropped = out_spatial[..., start_H:start_H + H, start_W:start_W + W]
+            # 5. 최종 Inverse FFT (평균값 사용)
+            out_fft = accumulated_fft / D
+            out_spatial = torch.fft.irfft2(out_fft, dim=(-2, -1))
+            out_spatial = torch.fft.ifftshift(out_spatial, dim=(-2, -1))
+            
+            # Crop
+            start_H, start_W = self.h_p // 2, self.w_p // 2
+            out_cropped = out_spatial[..., start_H:start_H + H, start_W:start_W + W]
+            
+            # 수치 안정화를 위한 Clamp
+            out_cropped = torch.clamp(out_cropped.real, min=-10.0, max=10.0)
 
-        return self.group_norm(out_cropped.real)
+        return self.group_norm(out_cropped)
 
 def gaussian_window(size, fwhm):
     with torch.no_grad():
