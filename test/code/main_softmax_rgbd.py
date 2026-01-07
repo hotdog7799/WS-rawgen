@@ -51,8 +51,8 @@ scaler = GradScaler()
 HPARAMS = {
     "IN_CHANNEL": 3,
     "OUT_CHANNEL": 51,
-    "BATCH_SIZE": 4,
-    "NUM_WORKERS": 4,
+    "BATCH_SIZE": 8,
+    "NUM_WORKERS": 16,
     "TRAINSET_SIZE": 18000,  # 전체 2만장 중 18,000장 학습용
     "EPOCHS_NUM": 1000,
     "LR": 5e-4,
@@ -299,7 +299,8 @@ def train(train_parameters):
         k: 0.0 for k in ["loss_sum", "PSNR_color", "PSNR_depth", "RMSE_depth"]
     }
 
-    ACCUM_STEPS = 4  # 가상 배치 사이즈: 4개마다 업데이트
+    # ACCUM_STEPS = 4  # 가상 배치 사이즈: 4개마다 업데이트
+    ACCUM_STEPS = 1
     optimizer = train_parameters["optimizer"]
     optimizer.zero_grad()  # 루프 시작 전 초기화
 
@@ -536,14 +537,14 @@ def main():
         n_channels=3, n_classes=51, psf=TPARAMS["psf"], height=256, width=256
     )
     # 학습 전 모델 파라미터 및 구조 확인
-    stats = summary(
-        model,
-        input_size=(HPARAMS["BATCH_SIZE"], 3, 256, 256),
-        device=DEVICE,
-        col_names=["input_size", "output_size", "num_params", "mult_adds"],
-        depth=3,
-    )  # depth를 조절해 얼마나 상세히 볼지 결정
-    print(stats)
+    # stats = summary(
+    #     model,
+    #     input_size=(HPARAMS["BATCH_SIZE"], 3, 256, 256),
+    #     device=DEVICE,
+    #     col_names=["input_size", "output_size", "num_params", "mult_adds"],
+    #     depth=3,
+    # )  # depth를 조절해 얼마나 상세히 볼지 결정
+    # print(stats)
     print(f"Using {torch.cuda.device_count()} GPUs!")
     model = nn.DataParallel(model).to(DEVICE) #GPU 2개
     register_debug_hooks(model)
@@ -565,7 +566,9 @@ def main():
         wandb.watch(model)
 
     print("Training Start!")
-    for epoch in range(HPARAMS["EPOCHS_NUM"]):
+    BAR = tqdm(range(HPARAMS['EPOCHS_NUM']), position=0, leave=True, colour='YELLOW')
+    # for epoch in range(HPARAMS["EPOCHS_NUM"]):
+    for epoch in BAR:
         TPARAMS["epoch_now"] = epoch
         train_result = train(TPARAMS)  # 루프 내부에서 wandb_log 호출
         test_result = test(TPARAMS)
