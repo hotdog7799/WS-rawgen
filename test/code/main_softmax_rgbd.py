@@ -2,7 +2,7 @@ import os
 from typing import Any, Dict  # 상단 import에 추가하세요
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
 
 # import config
 from utils import *
@@ -41,6 +41,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from einops import rearrange, reduce, repeat
+import time
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Device: {}".format(DEVICE))
@@ -50,8 +51,8 @@ scaler = GradScaler()
 HPARAMS = {
     "IN_CHANNEL": 3,
     "OUT_CHANNEL": 51,
-    "BATCH_SIZE": 1,
-    "NUM_WORKERS": 0,
+    "BATCH_SIZE": 4,
+    "NUM_WORKERS": 4,
     "TRAINSET_SIZE": 18000,  # 전체 2만장 중 18,000장 학습용
     "EPOCHS_NUM": 1000,
     "LR": 5e-4,
@@ -305,20 +306,25 @@ def train(train_parameters):
     bar = tqdm(
         train_parameters["trainset_loader"], position=1, leave=False, desc="Train Loop"
     )
-
+    total_steps_per_epoch = len(train_parameters["trainset_loader"])
+    epoch = train_parameters.get("epoch_now", 0) # main에서 넘겨줘야 함
+    loop_start = time.time() # 데이터 로딩 측정용
     for i, (image, label, label_color) in enumerate(bar):
         if torch.isnan(image).any():
             print(f"!!! Error: Input image contains NaN at index {i} !!!")
             continue
-
+        data_time = time.time() - loop_start # 진짜 데이터 로딩 시간
+        global_step = epoch * total_steps_per_epoch + i
         image = image.to(DEVICE)
         label = label.to(DEVICE)
         label_color = label_color.to(DEVICE)
 
         # 2. 최신 autocast 문법 적용 (device_type 명시)
         with autocast(device_type="cuda"):
+            model_start = time.time()
             intensity, soft_max_depth_stack = train_parameters["model"](image)
-
+            torch.cuda.synchronize()
+            forward_time = time.time() - model_start
             depth_range = TPARAMS["depth_range"].view(1, -1, 1, 1)
             output_depth = 1.0 - torch.sum(
                 depth_range * soft_max_depth_stack, dim=1, keepdim=True
@@ -352,6 +358,9 @@ def train(train_parameters):
                 {
                     "Train/Batch_Loss": total_loss.item(),
                     "Train/Batch_RMSE": rmse_depth.item(),
+                    "Train/Realtime_Forward_Time": forward_time,
+                    "Train/Realtime_Data_Time": data_time,
+                    "Train/Batch_Loss": total_loss.item()
                 }
             )
 
@@ -360,22 +369,20 @@ def train(train_parameters):
             # 배치 차원 제거를 위해 [0] 인덱싱 적용
             wandb.log(
                 {
-                    "Train_Realtime/Output_Depth": wandb.Image(
-                        torch.clamp(output_depth[0], 0, 1).cpu()
-                    ),
-                    "Train_Realtime/Intensity": wandb.Image(
-                        torch.clamp(intensity[0], 0, 1).cpu()
-                    ),
-                }
-            )
-
+                    "Realtime/Output_Depth": wandb.Image(torch.clamp(output_depth[0], 0, 1).cpu()),
+                    "Realtime/Input_Raw": wandb.Image(torch.clamp(image[0], 0, 1).cpu()),
+                    "Realtime/Intensity": wandb.Image(torch.clamp(intensity[0], 0, 1).cpu())
+                }, step=global_step
+            ) # global_step을 관리하면 연속적으로 보입니다.
         # 캐시 정리
         if i % 100 == 0:
+            print(f"Data: {data_time:.4f}s | Forward: {forward_time:.4f}s")
             torch.cuda.empty_cache()
 
         bar.set_description(
             f"Loss: {total_loss.item():.5f} | RMSE: {rmse_depth.item():.5f}"
         )
+        loop_start = time.time() # 다음 루프를 위한 시작점
 
     # 에폭 평균 계산
     for key in ["loss_sum", "RMSE_depth"]:
@@ -537,8 +544,8 @@ def main():
         depth=3,
     )  # depth를 조절해 얼마나 상세히 볼지 결정
     print(stats)
-
-    # model = nn.DataParallel(model).to(DEVICE)
+    print(f"Using {torch.cuda.device_count()} GPUs!")
+    model = nn.DataParallel(model).to(DEVICE) #GPU 2개
     register_debug_hooks(model)
     model = model.to(DEVICE)
     TPARAMS["model"] = model
@@ -559,6 +566,7 @@ def main():
 
     print("Training Start!")
     for epoch in range(HPARAMS["EPOCHS_NUM"]):
+        TPARAMS["epoch_now"] = epoch
         train_result = train(TPARAMS)  # 루프 내부에서 wandb_log 호출
         test_result = test(TPARAMS)
 

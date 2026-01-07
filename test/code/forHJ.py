@@ -129,7 +129,7 @@ class W2(nn.Module):
             
             # 4. [메모리 절약 핵심] 뎁스 방향 분할 연산
             # 51개를 한꺼번에 복원하면 메모리가 터지므로, 루프를 돌며 합산합니다.
-            chunk_size = 8 # 메모리 상황에 따라 4~16 조절
+            chunk_size = 17 # 메모리 상황에 따라 4~16 조절
             accumulated_fft = torch.zeros_like(raw_fft)
             
             pw_all = F.softplus(self.psf_weights.float()) # (k, C, 1, 1)
