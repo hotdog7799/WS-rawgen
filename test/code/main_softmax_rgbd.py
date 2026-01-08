@@ -41,7 +41,6 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from einops import rearrange, reduce, repeat
-import time
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Device: {}".format(DEVICE))
@@ -51,7 +50,7 @@ scaler = GradScaler()
 HPARAMS = {
     "IN_CHANNEL": 3,
     "OUT_CHANNEL": 51,
-    "BATCH_SIZE": 8,
+    "BATCH_SIZE": 32,
     "NUM_WORKERS": 16,
     "TRAINSET_SIZE": 18000,  # 전체 2만장 중 18,000장 학습용
     "EPOCHS_NUM": 1000,
@@ -125,38 +124,27 @@ else:
     print("Wandb logging is disabled")
 
 
-def wandb_log(loglist, epoch, note):
+def wandb_log(loglist, step, note):
+    log_dict = {}
     for key, val in loglist.items():
         if key in ["output_color", "output_depth", "label", "label_color", "image"]:
             try:
-                # 1. 텐서를 CPU로 옮기고 그라디언트 제거
                 item = val.detach().cpu()
-
-                # 2. 배치 차원 제거 (예: [1, 1, 256, 256] -> [1, 256, 256])
                 if item.dim() == 4:
                     item = item[0]
-                elif item.dim() == 5:  # 테스트 에러 메시지 중 dim=5 대응
-                    item = item[0, 0]
 
-                # 3. 데이터 범위 정규화 (0~1 사이로 클리핑)
-                item = torch.clamp(item, 0, 1)
+                # 핵심 수정: Output 관련 값들은 모두 정규화하여 '형태'를 확인
+                if "output" in key or "label" in key or "intensity" in key:
+                    item = (item - item.min()) / (item.max() - item.min() + 1e-8)
+                else:
+                    item = torch.clamp(item, 0, 1)
 
-                # 4. WandB 이미지 객체 생성 및 로깅
-                log = wandb.Image(item)
-                wandb.log(
-                    {f"{note.capitalize()}/{key.capitalize()}": log}, step=epoch + 1
-                )
-
+                log_dict[f"{note.capitalize()}/{key.capitalize()}"] = wandb.Image(item)
             except Exception as e:
-                print(f"Error logging {key} in {note}: {e}")
+                print(f"Error logging image {key}: {e}")
         else:
-            # 수치 데이터 (Loss, RMSE 등) 로깅
-            try:
-                wandb.log(
-                    {f"{note.capitalize()}/{key.capitalize()}": val}, step=epoch + 1
-                )
-            except Exception as e:
-                print(f"Error logging {key}: {e}")
+            log_dict[f"{note.capitalize()}/{key.capitalize()}"] = val
+    wandb.log(log_dict, step=step)
 
 
 # class LossFunction(nn.Module):
@@ -221,6 +209,9 @@ class LossFunction(nn.Module):
         super().__init__()
         # 수치적으로 가장 안정한 SmoothL1만 활성화
         self.criterion_smooth_l1 = nn.SmoothL1Loss(beta=0.1)
+        self.criterion_silog = scale_invariant_log_loss_v2_lambda(
+            min_scale=0.05, max_scale=0.7, lambda_value=0.5
+        )
 
         # 나머지는 일단 주석 처리 (메모리 및 초기화 오류 방지)
         # self.criterion_lpips = nn.DataParallel(lpips.LPIPS(net='vgg')).to(DEVICE)
@@ -235,10 +226,12 @@ class LossFunction(nn.Module):
         # .detach()를 써서 역전파에 영향을 주지 않게 합니다.
         lpips_color_loss = torch.tensor(0.0, device=DEVICE)
         lpips_depth_loss = torch.tensor(0.0, device=DEVICE)
-        si_log_loss = torch.tensor(0.0, device=DEVICE)
+        # si_log_loss = torch.tensor(0.0, device=DEVICE)
+        # 뎁스 전용 SILog Loss 적용 (0.5 가중치 제안)
+        silog_loss = self.criterion_silog(output_depth, label)
 
         # 3. Total Loss (현재는 SmoothL1들의 합)
-        total_loss = smooth_l1_color + smooth_l1_depth
+        total_loss = smooth_l1_color + smooth_l1_depth + 0.5 * silog_loss
 
         # 4. 성능 지표용 RMSE
         rmse_depth = torch.sqrt(torch.mean((output_depth - label) ** 2) + 1e-8)
@@ -257,7 +250,7 @@ class LossFunction(nn.Module):
             smooth_l1_color,
             smooth_l1_depth,
             rmse_depth,
-            si_log_loss,
+            silog_loss,
         )
 
 
@@ -308,24 +301,19 @@ def train(train_parameters):
         train_parameters["trainset_loader"], position=1, leave=False, desc="Train Loop"
     )
     total_steps_per_epoch = len(train_parameters["trainset_loader"])
-    epoch = train_parameters.get("epoch_now", 0) # main에서 넘겨줘야 함
-    loop_start = time.time() # 데이터 로딩 측정용
+    epoch = train_parameters.get("epoch_now", 0)  # main에서 넘겨줘야 함
     for i, (image, label, label_color) in enumerate(bar):
         if torch.isnan(image).any():
             print(f"!!! Error: Input image contains NaN at index {i} !!!")
             continue
-        data_time = time.time() - loop_start # 진짜 데이터 로딩 시간
         global_step = epoch * total_steps_per_epoch + i
         image = image.to(DEVICE)
         label = label.to(DEVICE)
         label_color = label_color.to(DEVICE)
-
+        # breakpoint()
         # 2. 최신 autocast 문법 적용 (device_type 명시)
         with autocast(device_type="cuda"):
-            model_start = time.time()
             intensity, soft_max_depth_stack = train_parameters["model"](image)
-            torch.cuda.synchronize()
-            forward_time = time.time() - model_start
             depth_range = TPARAMS["depth_range"].view(1, -1, 1, 1)
             output_depth = 1.0 - torch.sum(
                 depth_range * soft_max_depth_stack, dim=1, keepdim=True
@@ -361,20 +349,32 @@ def train(train_parameters):
                     "Train/Batch_RMSE": rmse_depth.item(),
                     "Train/Realtime_Forward_Time": forward_time,
                     "Train/Realtime_Data_Time": data_time,
-                    "Train/Batch_Loss": total_loss.item()
+                    "Train/Batch_Loss": total_loss.item(),
                 }
             )
 
         # 5. 실시간 WandB 이미지 로깅 (1000 배치마다)
         if i % 1000 == 0 and HPARAMS["WANDB_LOG"]:
             # 배치 차원 제거를 위해 [0] 인덱싱 적용
+            def normalize_for_wandb(img):
+                return (img - img.min()) / (img.max() - img.min() + 1e-8)
+
             wandb.log(
                 {
-                    "Realtime/Output_Depth": wandb.Image(torch.clamp(output_depth[0], 0, 1).cpu()),
-                    "Realtime/Input_Raw": wandb.Image(torch.clamp(image[0], 0, 1).cpu()),
-                    "Realtime/Intensity": wandb.Image(torch.clamp(intensity[0], 0, 1).cpu())
-                }, step=global_step
-            ) # global_step을 관리하면 연속적으로 보입니다.
+                    # 버그 수정: normalize_for_wandb 적용
+                    "Realtime/Output_Depth": wandb.Image(
+                        normalize_for_wandb(output_depth[0]).cpu()
+                    ),
+                    "Realtime/Input_Raw": wandb.Image(
+                        normalize_for_wandb(image[0]).cpu()
+                    ),
+                    # RGB 출력(Intensity)도 너무 어둡다면 정규화 적용 권장
+                    "Realtime/Intensity": wandb.Image(
+                        normalize_for_wandb(intensity[0]).cpu()
+                    ),
+                },
+                step=global_step,
+            )  # global_step을 관리하면 연속적으로 보입니다.
         # 캐시 정리
         if i % 100 == 0:
             print(f"Data: {data_time:.4f}s | Forward: {forward_time:.4f}s")
@@ -383,7 +383,7 @@ def train(train_parameters):
         bar.set_description(
             f"Loss: {total_loss.item():.5f} | RMSE: {rmse_depth.item():.5f}"
         )
-        loop_start = time.time() # 다음 루프를 위한 시작점
+        loop_start = time.time()  # 다음 루프를 위한 시작점
 
     # 에폭 평균 계산
     for key in ["loss_sum", "RMSE_depth"]:
@@ -399,7 +399,7 @@ def train(train_parameters):
     }
     result.update(visuals)
 
-    return result
+    return result, global_step
 
 
 def test(test_parameters):
@@ -546,7 +546,7 @@ def main():
     # )  # depth를 조절해 얼마나 상세히 볼지 결정
     # print(stats)
     print(f"Using {torch.cuda.device_count()} GPUs!")
-    model = nn.DataParallel(model).to(DEVICE) #GPU 2개
+    model = nn.DataParallel(model).to(DEVICE)  # GPU 2개
     register_debug_hooks(model)
     model = model.to(DEVICE)
     TPARAMS["model"] = model
@@ -566,17 +566,21 @@ def main():
         wandb.watch(model)
 
     print("Training Start!")
-    BAR = tqdm(range(HPARAMS['EPOCHS_NUM']), position=0, leave=True, colour='YELLOW')
+    BAR = tqdm(range(HPARAMS["EPOCHS_NUM"]), position=0, leave=True)
     # for epoch in range(HPARAMS["EPOCHS_NUM"]):
     for epoch in BAR:
         TPARAMS["epoch_now"] = epoch
-        train_result = train(TPARAMS)  # 루프 내부에서 wandb_log 호출
+
+        # Train 실행 (내부에서 global_step 로깅)
+        train_result, last_global_step = train(TPARAMS)
+        # Test 실행
         test_result = test(TPARAMS)
 
         # 로그 기록
         if HPARAMS["WANDB_LOG"]:
-            wandb_log(train_result, epoch, "train")
-            wandb_log(test_result, epoch, "test")
+            # 에폭 종료 후 요약 로깅 (last_global_step 사용)
+            wandb_log(train_result, last_global_step, "Train_Epoch")
+            wandb_log(test_result, last_global_step, "Test_Epoch")
 
         # 가중치 저장
         if (epoch + 1) % 10 == 0:

@@ -107,68 +107,104 @@ class W2(nn.Module):
         self.alpha = nn.Parameter(torch.ones(k, 1, 1, 1) * 0.1)
         self.k = k
 
+    # def forward(self, raw: torch.Tensor, psf: torch.Tensor, epsilon=1e-4) -> torch.Tensor:
+    #     # [핵심] 수치 안정성을 위해 float32 강제 사용
+    #     with torch.cuda.amp.autocast(enabled=False):
+    #         raw = raw.float()
+    #         psf = psf.float()
+    #         B, C, H, W = raw.shape
+    #         D = psf.shape[0] # 51
+            
+    #         # 1. PSF 정규화
+    #         psf_sum = psf.sum(dim=(-2, -1), keepdim=True).abs() + 1e-8
+    #         psf_normalized = psf / psf_sum
+            
+    #         # 2. 패딩 (Replicate 모드)
+    #         raw_padded = F.pad(raw, (self.w_p // 2, self.w_p - self.w_p // 2, 
+    #                                  self.h_p // 2, self.h_p - self.h_p // 2), mode='replicate')
+            
+    #         # 3. FFT 수행 (Raw 이미지만 먼저)
+    #         raw_fft = torch.fft.rfft2(raw_padded, dim=(-2, -1)) # (B, C, H_f, W_f)
+    #         target_fft_size = (raw_padded.size(-2), raw_padded.size(-1))
+            
+    #         # 4. [메모리 절약 핵심] 뎁스 방향 분할 연산
+    #         # 51개를 한꺼번에 복원하면 메모리가 터지므로, 루프를 돌며 합산합니다.
+    #         chunk_size = 17 # 메모리 상황에 따라 4~16 조절
+    #         accumulated_fft = torch.zeros_like(raw_fft)
+            
+    #         pw_all = F.softplus(self.psf_weights.float()) # (k, C, 1, 1)
+
+    #         for i in range(0, D, chunk_size):
+    #             end_i = min(i + chunk_size, D)
+    #             psf_chunk = psf_normalized[i:end_i] # (chunk, C, H_p, W_p)
+                
+    #             # Chunk PSF 패딩 및 FFT
+    #             psf_padded_chunk = F.pad(psf_chunk, (W // 2, W - W // 2, H // 2, H - H // 2), mode='constant', value=0)
+    #             psf_fft_chunk = torch.fft.rfft2(psf_padded_chunk, s=target_fft_size, dim=(-2, -1))
+                
+    #             # Wiener Filter 계산
+    #             # pw를 현재 chunk 크기에 맞춰 확장
+    #             pw_chunk = pw_all.expand(psf_fft_chunk.shape[0], -1, -1, -1)
+    #             if pw_chunk.shape[-1] != psf_fft_chunk.shape[-1]:
+    #                 pw_chunk = pw_chunk[..., :psf_fft_chunk.shape[-1]]
+                
+    #             denom = psf_fft_chunk.abs()**2 + pw_chunk + epsilon
+    #             wiener_filter = psf_fft_chunk.conj() / (denom + 1e-8)
+                
+    #             # 필터링 후 합산 (Mean을 내기 위해 합산 후 나중에 D로 나눔)
+    #             # raw_fft: (B, C, Hf, Wf), wiener: (chunk, C, Hf, Wf)
+    #             res_chunk = raw_fft.unsqueeze(0) * wiener_filter.unsqueeze(1) # (chunk, B, C, Hf, Wf)
+    #             accumulated_fft += res_chunk.sum(dim=0)
+                
+    #             # 캐시 비우기 (매우 중요)
+    #             del psf_padded_chunk, psf_fft_chunk, wiener_filter, res_chunk
+
+    #         # 5. 최종 Inverse FFT (평균값 사용)
+    #         out_fft = accumulated_fft / D
+    #         out_spatial = torch.fft.irfft2(out_fft, dim=(-2, -1))
+    #         out_spatial = torch.fft.ifftshift(out_spatial, dim=(-2, -1))
+            
+    #         # Crop
+    #         start_H, start_W = self.h_p // 2, self.w_p // 2
+    #         out_cropped = out_spatial[..., start_H:start_H + H, start_W:start_W + W]
+            
+    #         # 수치 안정화를 위한 Clamp
+    #         out_cropped = torch.clamp(out_cropped.real, min=-10.0, max=10.0)
+
+    #     return self.group_norm(out_cropped)
+    # forHJ.py 의 W2 클래스 forward를 이렇게 수정하세요.
     def forward(self, raw: torch.Tensor, psf: torch.Tensor, epsilon=1e-4) -> torch.Tensor:
-        # [핵심] 수치 안정성을 위해 float32 강제 사용
-        with torch.cuda.amp.autocast(enabled=False):
-            raw = raw.float()
-            psf = psf.float()
+        with torch.amp.autocast(device_type="cuda", enabled=False):
+            raw, psf = raw.float(), psf.float()
             B, C, H, W = raw.shape
             D = psf.shape[0] # 51
             
-            # 1. PSF 정규화
-            psf_sum = psf.sum(dim=(-2, -1), keepdim=True).abs() + 1e-8
-            psf_normalized = psf / psf_sum
-            
-            # 2. 패딩 (Replicate 모드)
+            # 1. 입력 이미지 FFT (한 번만 수행)
             raw_padded = F.pad(raw, (self.w_p // 2, self.w_p - self.w_p // 2, 
-                                     self.h_p // 2, self.h_p - self.h_p // 2), mode='replicate')
-            
-            # 3. FFT 수행 (Raw 이미지만 먼저)
-            raw_fft = torch.fft.rfft2(raw_padded, dim=(-2, -1)) # (B, C, H_f, W_f)
+                                    self.h_p // 2, self.h_p - self.h_p // 2), mode='replicate')
+            raw_fft = torch.fft.rfft2(raw_padded, dim=(-2, -1))
             target_fft_size = (raw_padded.size(-2), raw_padded.size(-1))
             
-            # 4. [메모리 절약 핵심] 뎁스 방향 분할 연산
-            # 51개를 한꺼번에 복원하면 메모리가 터지므로, 루프를 돌며 합산합니다.
-            chunk_size = 17 # 메모리 상황에 따라 4~16 조절
-            accumulated_fft = torch.zeros_like(raw_fft)
-            
-            pw_all = F.softplus(self.psf_weights.float()) # (k, C, 1, 1)
+            # 2. 위너 필터 합산 (메모리를 거의 안 먹음)
+            accumulated_filter = torch.zeros_like(raw_fft[0]).unsqueeze(0) # (1, C, Hf, Wf)
+            pw_all = F.softplus(self.psf_weights.float())
 
-            for i in range(0, D, chunk_size):
-                end_i = min(i + chunk_size, D)
-                psf_chunk = psf_normalized[i:end_i] # (chunk, C, H_p, W_p)
+            for i in range(D): # 루프를 돌며 필터 '값'만 합산
+                psf_d = psf[i:i+1] # (1, C, H, W)
+                psf_padded = F.pad(psf_d, (W // 2, W - W // 2, H // 2, H - H // 2), mode='constant', value=0)
+                psf_fft = torch.fft.rfft2(psf_padded, s=target_fft_size, dim=(-2, -1))
                 
-                # Chunk PSF 패딩 및 FFT
-                psf_padded_chunk = F.pad(psf_chunk, (W // 2, W - W // 2, H // 2, H - H // 2), mode='constant', value=0)
-                psf_fft_chunk = torch.fft.rfft2(psf_padded_chunk, s=target_fft_size, dim=(-2, -1))
+                denom = psf_fft.abs()**2 + pw_all + epsilon
+                wiener_filter = psf_fft.conj() / (denom + 1e-8)
+                accumulated_filter += wiener_filter # 필터 누적
                 
-                # Wiener Filter 계산
-                # pw를 현재 chunk 크기에 맞춰 확장
-                pw_chunk = pw_all.expand(psf_fft_chunk.shape[0], -1, -1, -1)
-                if pw_chunk.shape[-1] != psf_fft_chunk.shape[-1]:
-                    pw_chunk = pw_chunk[..., :psf_fft_chunk.shape[-1]]
-                
-                denom = psf_fft_chunk.abs()**2 + pw_chunk + epsilon
-                wiener_filter = psf_fft_chunk.conj() / (denom + 1e-8)
-                
-                # 필터링 후 합산 (Mean을 내기 위해 합산 후 나중에 D로 나눔)
-                # raw_fft: (B, C, Hf, Wf), wiener: (chunk, C, Hf, Wf)
-                res_chunk = raw_fft.unsqueeze(0) * wiener_filter.unsqueeze(1) # (chunk, B, C, Hf, Wf)
-                accumulated_fft += res_chunk.sum(dim=0)
-                
-                # 캐시 비우기 (매우 중요)
-                del psf_padded_chunk, psf_fft_chunk, wiener_filter, res_chunk
-
-            # 5. 최종 Inverse FFT (평균값 사용)
-            out_fft = accumulated_fft / D
-            out_spatial = torch.fft.irfft2(out_fft, dim=(-2, -1))
-            out_spatial = torch.fft.ifftshift(out_spatial, dim=(-2, -1))
+            # 3. 최종 연산 (이미지 * 합산된 필터)
+            out_fft = raw_fft * (accumulated_filter / D)
+            out_spatial = torch.fft.ifftshift(torch.fft.irfft2(out_fft, dim=(-2, -1)), dim=(-2, -1))
             
-            # Crop
+            # Crop 및 Clamp
             start_H, start_W = self.h_p // 2, self.w_p // 2
             out_cropped = out_spatial[..., start_H:start_H + H, start_W:start_W + W]
-            
-            # 수치 안정화를 위한 Clamp
             out_cropped = torch.clamp(out_cropped.real, min=-10.0, max=10.0)
 
         return self.group_norm(out_cropped)
