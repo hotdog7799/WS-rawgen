@@ -28,12 +28,12 @@ import time
 HPARAMS = {
     # 'IMAGE_PATH': '/home/hjahn/mnt/ssd2/dataset_ssd2/HJA/HJA_data/20251230_152424_20000_8/image/0',
     # 'LABEL_PATH': '/home/hjahn/mnt/ssd2/dataset_ssd2/HJA/HJA_data/20251230_152424_20000_8/label/0',
-    'IMAGE_PATH': "/home/hjahn/mnt/ssd2/dataset_ssd2/HJA/HJA_data/deconv_test/image/0",
-    'LABEL_PATH': "/home/hjahn/mnt/ssd2/dataset_ssd2/HJA/HJA_data/deconv_test/label/0",
-    'BG_PATH': '/home/hjahn/mnt/ssd1/depth_imaging/dataset_ssd1/mirflickr25k/',
+    'IMAGE_PATH': "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/image/0",
+    'LABEL_PATH': "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/label/0",
+    'BG_PATH': '/home/hjahn/mnt/nas/_datasets/mirflickr',
     'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/251223_HJC/gray_center_psf/",
     # 'SAVE_PATH': "/home/hjahn/mnt/nas/Research/HJA/",
-    'SAVE_PATH': "/home/hjahn/mnt/ssd2/dataset_ssd2/HJA/HJA_data/syn_raw_image/",
+    'SAVE_PATH': "/home/hjahn/mnt/ssd1/data/hjahn/syn_raw_image/",
     'BATCH_SIZE': 32, 
     'NUM_WORKERS': 12, # 너무 높으면 오히려 CPU 오버헤드 발생 가능, 12~16 권장
     'SCENE_SIZE': (576, 1024),
