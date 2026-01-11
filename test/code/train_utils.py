@@ -92,7 +92,7 @@ def npz_loader(path):
     
     # 3. [핵심] 정답 라벨도 모델 입력과 똑같이 256x256으로 리사이즈
     # Loss 계산 시 차원을 맞추기 위해 반드시 필요합니다.
-    sample = F.interpolate(sample.unsqueeze(0), size=(512, 512), mode='bilinear', align_corners=False).squeeze(0)
+    sample = F.interpolate(sample.unsqueeze(0), size=(256, 256), mode='bilinear', align_corners=False).squeeze(0)
     
     return sample
 
@@ -156,18 +156,18 @@ def weight_save(epoch,START_DATE,weight_save_path,TPARAMS,name_tmp):
     weight_save_path = weight_save_path+'/{}'.format(name_tmp)
     make_dir(weight_save_path)
     # Network save for inference
-    save_filename = "{}/model_{}_epoch_{}.pth".format(weight_save_path,START_DATE,epoch)
+    save_filename = "{}/{}_model_aiobio.pth".format(weight_save_path,START_DATE)
     
-    # torch.save(TPARAMS['model'].state_dict(), save_filename)
-    torch.save({
-        'epoch': epoch,
-        'epoch_now': TPARAMS['epoch_now'], # 2024-05-01 added
-        'optimizer_state_dict': TPARAMS['optimizer'].state_dict(),
-        'scheduler_state_dict': TPARAMS['scheduler'].state_dict(),
-        'model_state_dict': TPARAMS['model'].state_dict(),
-    }, save_filename)
+    torch.save(TPARAMS['model'].state_dict(), save_filename)
+    # torch.save({
+    #     'epoch': epoch,
+    #     'epoch_now': TPARAMS['epoch_now'], # 2024-05-01 added
+    #     'optimizer_state_dict': TPARAMS['optimizer'].state_dict(),
+    #     'scheduler_state_dict': TPARAMS['scheduler'].state_dict(),
+    #     'model_state_dict': TPARAMS['model'].state_dict(),
+    # }, save_filename)
     
-    print('{}epoch weight saved'.format(epoch))
+    print('*********** {} epoch weight saved'.format(epoch))
     return None
 
 def weight_save_with_discriminator(epoch, START_DATE, weight_save_path, TPARAMS, name_tmp):

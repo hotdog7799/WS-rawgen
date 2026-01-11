@@ -2,10 +2,10 @@ import os
 from typing import Any, Dict  # 상단 import에 추가하세요
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
 
 # import config
-from utils import *
+from train_utils import *
 
 # from MWDNs import MWDNet_CPSF_RGBD_large_w_softmax_output_add_DepthRefine
 from mwdnet_cpsf_rgbd_model import MWDNet_CPSF_RGBD_large_w_softmax_change_wiener_reg
@@ -51,20 +51,20 @@ scaler = GradScaler()
 HPARAMS = {
     "IN_CHANNEL": 3,
     "OUT_CHANNEL": 51,
-    "BATCH_SIZE": 8,
+    "BATCH_SIZE": 32, 
     "NUM_WORKERS": 16,
     "TRAINSET_SIZE": 18000,  # 전체 2만장 중 18,000장 학습용
     "EPOCHS_NUM": 1000,
-    "LR": 5e-4,
-    "H":512,
-    "W":512,
+    "LR": 1e-4,
+    "H":256,
+    "W":256,
     # [수정] SSD2에 저장된 실제 경로 (마지막 /0/ 제외)
     "DATA_ROOT_RAW": "/home/hjahn/mnt/ssd1/data/hjahn/syn_raw_image/0108_115113/raw/",
     "DATA_ROOT_IMAGE": "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/image/",
     "DATA_ROOT_LABEL": "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/label/",
     "DATA_ROOT_VAL_REAL": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/validate_set/",
     "PSF_DIR": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/251223_HJC/gray_center_psf/",
-    "WEIGHT_SAVE_PATH": "/home/hjahn/depth/WS-rawgen/",
+    "WEIGHT_SAVE_PATH": "/home/hjahn/depth/WS-rawgen/pth_256/",
     "CHECKPOINT_PATH": "",
 }
 
@@ -93,7 +93,9 @@ def load_psf_for_train(psf_dir, target_size=(HPARAMS["H"], HPARAMS["W"])):
         # v2.functional 사용
         psf_t = v2.functional.to_image(psf_img).to(torch.float32)
         psf_t = v2.functional.resize(psf_t, target_size)
-        psf_t /= torch.sum(psf_t) + 1e-8  # L1 Normalization
+        print(psf_t.max())
+        psf_t = psf_t / 255.
+        # psf_t /= torch.sum(psf_t) + 1e-8  # L1 Normalization
         psf_stack.append(psf_t)
     return torch.stack(psf_stack)  # (51, 1, 512, 512)
 
@@ -153,7 +155,7 @@ class LossFunction(nn.Module):
         )
 
         # 나머지는 일단 주석 처리 (메모리 및 초기화 오류 방지)
-        # self.criterion_lpips = nn.DataParallel(lpips.LPIPS(net='vgg')).to(DEVICE)
+        self.criterion_lpips = nn.DataParallel(lpips.LPIPS(net='vgg')).to(DEVICE)
         # self.criterion_silog_loss = scale_invariant_log_loss_v2_lambda(...)
 
     def forward(self, output_color, output_depth, label_color, label, epoch=0):
@@ -164,13 +166,20 @@ class LossFunction(nn.Module):
         # 2. 나머지 로스는 0으로 처리 (변수 유지를 위해)
         # .detach()를 써서 역전파에 영향을 주지 않게 합니다.
         lpips_color_loss = torch.tensor(0.0, device=DEVICE)
+        # lpips_color_loss = torch.mean(self.criterion_lpips(output_color, label_color))
         lpips_depth_loss = torch.tensor(0.0, device=DEVICE)
+        # output_depth_rgb = output_depth.repeat(1,3,1,1) # make RGB depth
+        # label_depth_rgb = label.repeat(1,3,1,1) # make RGB depth
+        # lpips_depth_loss = torch.mean(self.criterion_lpips(output_depth_rgb, label_depth_rgb))       
+        
         # si_log_loss = torch.tensor(0.0, device=DEVICE)
         # 뎁스 전용 SILog Loss 적용 (0.5 가중치 제안)
         silog_loss = self.criterion_silog(output_depth, label)
 
         # 3. Total Loss (현재는 SmoothL1들의 합)
-        total_loss = smooth_l1_color + smooth_l1_depth + 0.5 * silog_loss
+        # total_loss = smooth_l1_color + smooth_l1_depth + 0.5 * silog_loss
+        total_loss = smooth_l1_depth + 0.7 * silog_loss
+        # total_loss = smooth_l1_color + smooth_l1_depth + 0.7 *silog_loss 
 
         # 4. 성능 지표용 RMSE
         rmse_depth = torch.sqrt(torch.mean((output_depth - label) ** 2) + 1e-8)
@@ -229,6 +238,10 @@ def train(train_parameters):
     result = {}
     result["loss"] = 0
     result["RMSE_depth"] = 0
+    # result["LPIPS_color"] = 0
+    # result["LPIPS_depth"] = 0
+    # result["PSNR_color"] = 0
+    # result["PSNR_depth"] = 0
     # ACCUM_STEPS = 4  # 가상 배치 사이즈: 4개마다 업데이트
     ACCUM_STEPS = 1
 
@@ -247,7 +260,7 @@ def train(train_parameters):
                 depth_range * soft_max_depth_stack, dim=1, keepdim=True
             )
 
-            total_loss, _, _, _, _, rmse_depth, _ = train_parameters["loss_function"](
+            total_loss, _, _, _, _, rmse_depth, _  = train_parameters["loss_function"](
                 intensity, output_depth, label_color, label, i
             )
             loss_to_backward = total_loss / ACCUM_STEPS
@@ -265,10 +278,15 @@ def train(train_parameters):
 
         result["loss"] += total_loss.item()
         result["RMSE_depth"] += rmse_depth.item()
+        # result['LPIPS_color'] += lpips_color_loss
+        # result['LPIPS_depth'] += lpips_depth_loss
+        # result['PSNR_color'] += PSNR(result['output_color'], label_color)
+        # result['PSNR_depth'] += PSNR(result['output_depth'], label)
 
         bar.set_description(
             f"Loss: {total_loss.item():.5f} | RMSE: {rmse_depth.item():.5f}"
         )
+        # break
 
     result["loss"] /= len(train_parameters["trainset_loader"])
     result["RMSE_depth"] /= len(train_parameters["trainset_loader"])
@@ -305,6 +323,7 @@ def test(test_parameters):
 
             result["loss"] += total_loss.item()
             result["RMSE_depth"] += rmse_depth.item()
+            # break
 
     result["loss"] /= len(test_parameters["testset_loader"])
     result["RMSE_depth"] /= len(test_parameters["testset_loader"])
@@ -453,6 +472,9 @@ def main():
     TPARAMS["scheduler"] = scheduler
     TPARAMS["loss_function"] = LossFunction()
     print("Training Start!")
+
+    min_loss = float('inf')
+    
     BAR = tqdm(range(HPARAMS["EPOCHS_NUM"]), position=0, leave=True)
     for epoch in BAR:
         TPARAMS["epoch_now"] = epoch
@@ -464,18 +486,15 @@ def main():
         # 3. 리얼 데이터 Inference 실행 (눈으로 확인용)
         real_result = validate_real(TPARAMS)
 
-        # 로그 기록
-        # if HPARAMS["WANDB_LOG"]:
-            # 에폭 종료 후 요약 로깅 (last_global_step 사용)
+        current_test_loss = test_result["loss"]
+
         wandb_log(train_result, epoch, "Train")
         wandb_log(test_result, epoch, "Test")
         wandb_log(real_result, epoch, "Real")
 
-        # 가중치 저장
-        if (epoch + 1) % 5 == 0:
-            weight_save(
-                epoch, "HJA_Exp", HPARAMS["WEIGHT_SAVE_PATH"], TPARAMS, "model_51ch"
-            )
+        if min_loss > current_test_loss:
+            min_loss = current_test_loss
+            weight_save(epoch, START_DATE, HPARAMS["WEIGHT_SAVE_PATH"], TPARAMS, "model_51ch")
 
 
 if __name__ == "__main__":

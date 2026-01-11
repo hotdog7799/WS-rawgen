@@ -8,3 +8,8 @@ test/images/
 test/code/wandb
 test/slack_message_test.py
 test/slack_test.py
+test/code/temporary.py
+test/code/train_you.py
+test/code/__pycache__/
+previous/
+pth_256/

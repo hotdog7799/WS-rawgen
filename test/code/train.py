@@ -2,10 +2,10 @@ import os
 from typing import Any, Dict  # 상단 import에 추가하세요
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
 
 # import config
-from utils import *
+from train_utils import *
 
 # from MWDNs import MWDNet_CPSF_RGBD_large_w_softmax_output_add_DepthRefine
 from mwdnet_cpsf_rgbd_model import MWDNet_CPSF_RGBD_large_w_softmax_change_wiener_reg
@@ -51,20 +51,20 @@ scaler = GradScaler()
 HPARAMS = {
     "IN_CHANNEL": 3,
     "OUT_CHANNEL": 51,
-    "BATCH_SIZE": 8,
+    "BATCH_SIZE": 32, 
     "NUM_WORKERS": 16,
     "TRAINSET_SIZE": 18000,  # 전체 2만장 중 18,000장 학습용
     "EPOCHS_NUM": 1000,
     "LR": 5e-4,
-    "H":512,
-    "W":512,
+    "H":256,
+    "W":256,
     # [수정] SSD2에 저장된 실제 경로 (마지막 /0/ 제외)
     "DATA_ROOT_RAW": "/home/hjahn/mnt/ssd1/data/hjahn/syn_raw_image/0108_115113/raw/",
     "DATA_ROOT_IMAGE": "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/image/",
     "DATA_ROOT_LABEL": "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/label/",
     "DATA_ROOT_VAL_REAL": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/validate_set/",
     "PSF_DIR": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/251223_HJC/gray_center_psf/",
-    "WEIGHT_SAVE_PATH": "/home/hjahn/depth/WS-rawgen/",
+    "WEIGHT_SAVE_PATH": "/home/hjahn/depth/WS-rawgen/pth_256/",
     "CHECKPOINT_PATH": "",
 }
 
@@ -269,6 +269,7 @@ def train(train_parameters):
         bar.set_description(
             f"Loss: {total_loss.item():.5f} | RMSE: {rmse_depth.item():.5f}"
         )
+        # break
 
     result["loss"] /= len(train_parameters["trainset_loader"])
     result["RMSE_depth"] /= len(train_parameters["trainset_loader"])
@@ -305,6 +306,7 @@ def test(test_parameters):
 
             result["loss"] += total_loss.item()
             result["RMSE_depth"] += rmse_depth.item()
+            # break   
 
     result["loss"] /= len(test_parameters["testset_loader"])
     result["RMSE_depth"] /= len(test_parameters["testset_loader"])
@@ -444,10 +446,11 @@ def main():
     model = nn.DataParallel(model).to(DEVICE)  # GPU 2개
     TPARAMS["model"] = model.to(DEVICE)
 
-    optimizer = optim.AdamW(model.parameters(), lr=HPARAMS["LR"], weight_decay=1e-4)
+    optimizer = optim.AdamW(TPARAMS["model"].parameters(), lr=HPARAMS["LR"], weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.1, patience=5
     )
+    min_loss = float('inf')
 
     TPARAMS["optimizer"] = optimizer
     TPARAMS["scheduler"] = scheduler
@@ -463,19 +466,21 @@ def main():
         test_result = test(TPARAMS)
         # 3. 리얼 데이터 Inference 실행 (눈으로 확인용)
         real_result = validate_real(TPARAMS)
-
-        # 로그 기록
-        # if HPARAMS["WANDB_LOG"]:
-            # 에폭 종료 후 요약 로깅 (last_global_step 사용)
+        current_test_loss = test_result["loss"]
+        print("커런트 로스")
         wandb_log(train_result, epoch, "Train")
         wandb_log(test_result, epoch, "Test")
         wandb_log(real_result, epoch, "Real")
-
+        print(f"커런트 로스: {current_test_loss}")
         # 가중치 저장
-        if (epoch + 1) % 5 == 0:
-            weight_save(
-                epoch, "HJA_Exp", HPARAMS["WEIGHT_SAVE_PATH"], TPARAMS, "model_51ch"
-            )
+        if current_test_loss < min_loss:
+            min_loss = current_test_loss
+            save_filename = "{}/model_aiobio.pth".format(HPARAMS["WEIGHT_SAVE_PATH"],)
+            torch.save(TPARAMS['model'].state_dict(), save_filename)
+            print("PTY 저장") 
+            # weight_save(
+            #     epoch, "HJA_Exp", HPARAMS["WEIGHT_SAVE_PATH"], TPARAMS, "model_51ch"
+            # )
 
 
 if __name__ == "__main__":
