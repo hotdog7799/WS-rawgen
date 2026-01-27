@@ -59,7 +59,9 @@ HPARAMS = {
     "H":256,
     "W":256,
     # [수정] SSD2에 저장된 실제 경로 (마지막 /0/ 제외)
-    "DATA_ROOT_RAW": "/home/hjahn/mnt/ssd1/data/hjahn/syn_raw_image/0108_115113/raw/",
+    # "DATA_ROOT_RAW": "/home/hjahn/mnt/ssd1/data/hjahn/syn_raw_image/0108_115113/raw/",
+    "DATA_ROOT_RAW": "/home/hjahn/mnt/ssd1/data/hjahn/syn_raw_image_gray/0113_000920/raw/", #gray
+    # /home/hjahn/mnt/ssd1/data/hjahn/syn_raw_image_color/0113_001134/raw/ #color
     "DATA_ROOT_IMAGE": "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/image/",
     "DATA_ROOT_LABEL": "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/label/",
     "DATA_ROOT_VAL_REAL": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/validate_set/",

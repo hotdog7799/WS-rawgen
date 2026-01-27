@@ -31,9 +31,12 @@ HPARAMS = {
     'IMAGE_PATH': "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/image/0",
     'LABEL_PATH': "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/label/0",
     'BG_PATH': '/home/hjahn/mnt/nas/_datasets/mirflickr',
-    'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/251223_HJC/gray_center_psf/",
+    # 'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/251223_HJC/gray_center_psf/",
+    # 'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260112/psf_color_aligned/", #260112
+    # 'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260113_wh_nofilter_psf_aligned_gray/", #260113
+    'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260113_wh_nofilter_psf_aligned_color/", #260113
     # 'SAVE_PATH': "/home/hjahn/mnt/nas/Research/HJA/",
-    'SAVE_PATH': "/home/hjahn/mnt/ssd1/data/hjahn/syn_raw_image/",
+    'SAVE_PATH': "/home/hjahn/mnt/ssd1/data/hjahn/syn_raw_image_white_nofilter_color/",
     'BATCH_SIZE': 32, 
     'NUM_WORKERS': 12, # 너무 높으면 오히려 CPU 오버헤드 발생 가능, 12~16 권장
     'SCENE_SIZE': (576, 1024),
@@ -119,7 +122,7 @@ class SceneDataset(Dataset):
     def __getitem__(self, idx):
         img = self.transform(Image.open(self.img_paths[idx]).convert('RGB'))
         lbl = torch.from_numpy(np.load(self.lbl_paths[idx])['dmap']).float()
-        bg_img = self.bg_transform(Image.open(random.choice(self.bg_paths)).convert('RGB')) * 0.2
+        bg_img = self.bg_transform(Image.open(random.choice(self.bg_paths)).convert('RGB')) * 0.001
         return img, lbl, bg_img, self.img_paths[idx], self.lbl_paths[idx]
 
 # --- 5. 비동기 저장을 위한 함수 ---

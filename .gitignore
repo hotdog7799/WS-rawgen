@@ -13,3 +13,5 @@ test/code/train_you.py
 test/code/__pycache__/
 previous/
 pth_256/
+test/inference_results/
+test/inference_results.zip
