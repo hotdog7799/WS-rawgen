@@ -13,5 +13,9 @@ test/code/train_you.py
 test/code/__pycache__/
 previous/
 pth_256/
+pth_256_color/
+pth_256_gray/
+pth_256_gray-nofilter/
+pth_256_white-led/
 test/inference_results/
 test/inference_results.zip
