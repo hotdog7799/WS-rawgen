@@ -17,5 +17,6 @@ pth_256_color/
 pth_256_gray/
 pth_256_gray-nofilter/
 pth_256_white-led/
+pth*/
 test/inference_results/
 test/inference_results.zip

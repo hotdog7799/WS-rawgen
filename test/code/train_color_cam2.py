@@ -2,7 +2,7 @@ import os
 from typing import Any, Dict  # 상단 import에 추가하세요
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1,2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 # import config
 from train_utils import *
@@ -51,7 +51,7 @@ scaler = GradScaler()
 HPARAMS = {
     "IN_CHANNEL": 3,
     "OUT_CHANNEL": 51,
-    "BATCH_SIZE": 32, 
+    "BATCH_SIZE": 16, 
     "NUM_WORKERS": 8,
     "TRAINSET_SIZE": 18000,  # 전체 2만장 중 18,000장 학습용
     "EPOCHS_NUM": 1000,
@@ -59,13 +59,13 @@ HPARAMS = {
     "H":512,
     "W":512,
     # [수정] SSD2에 저장된 실제 경로 (마지막 /0/ 제외)
-    "DATA_ROOT_RAW": "/home/hjahn/mnt/ssd1/data/hjahn/syn_raw_image_color/0113_001134/raw/",
-    "DATA_ROOT_IMAGE": "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/image/",
-    "DATA_ROOT_LABEL": "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/label/",
-    "DATA_ROOT_VAL_REAL": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260112/rawimage_uv/",
+    "DATA_ROOT_RAW": "/home/hjahn/mnt/nas/Research/HJA/syn_raw_cam2/0206_104550/raw/",
+    "DATA_ROOT_IMAGE": "/home/hjahn/mnt/nas/Research/HJA/dataset/image/",
+    "DATA_ROOT_LABEL": "/home/hjahn/mnt/nas/Research/HJA/dataset/label/",
+    "DATA_ROOT_VAL_REAL": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/cam2/260205-raw/",
     # "PSF_DIR": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/251223_HJC/gray_center_psf/",
-    "PSF_DIR": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260112/psf_color_aligned/",
-    "WEIGHT_SAVE_PATH": "/home/hjahn/depth/WS-rawgen/pth_512_uv/",
+    "PSF_DIR": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/cam2/260205_psf_color_aligned/",
+    "WEIGHT_SAVE_PATH": "/home/hjahn/mnt/nas/homes/HJA/lensless-depth/WS-rawgen/pth_cam2_512_uv/",
     "CHECKPOINT_PATH": "",
 }
 
@@ -178,18 +178,7 @@ class LossFunction(nn.Module):
 
         # 3. weighted Depth SmoothL1 loss
         raw_l1_depth = self.criterion_smooth_l1(output_depth, label)
-        # [수정] ROI Mask + 비대칭 페널티 (Asymmetric Penalty)
-        # 치아 영역(roi_mask=1)인데, 예측값(output_depth)이 정답(label)보다 작다면(즉, 배경인 0쪽으로 간다면)
-        # *참고: 깊이 정의에 따라 부호는 반대일 수 있음. 
-        # (여기서는 output_depth가 1.0이 가까운 것, 0.0이 먼 배경이라고 가정 시 -> output_depth < label 인 경우 페널티)
-        # 만약 반대라면 (output > label)로 수정 필요.
-
-        diff = label - output_depth # 정답(치아) - 예측(배경) > 0 이면 구멍이 난 상태
-        under_estimation_mask = (diff > 0).float() * roi_mask
-
-        # 구멍이 난 곳에는 기존 7배 + 추가 10배 = 총 17배 가중치 부여
-        penalty_weight = 1.0 + under_estimation_mask * 10.0 
-        depth_weight = (roi_mask * 15.0 + (1 - roi_mask) * 1.0) * penalty_weight
+        depth_weight = roi_mask * 7.0 + (1 - roi_mask) * 1.0
         smooth_l1_depth = torch.mean(raw_l1_depth * depth_weight)
 
         # 4. depth gradient loss
@@ -198,10 +187,27 @@ class LossFunction(nn.Module):
         loss_grad_x = torch.mean(torch.abs(out_grad_x - target_grad_x))
         loss_grad_y = torch.mean(torch.abs(out_grad_y - target_grad_y))
         grad_loss = loss_grad_x + loss_grad_y
-        lpips_depth_loss = torch.tensor(0.0, device=DEVICE)       
-        silog_loss = self.criterion_silog(output_depth, label)
-        # total_loss = smooth_l1_color + smooth_l1_depth + 0.7 *silog_loss + lpips_color_loss
+        # grad_loss = torch.mean(torch.abs(out_grad_x - target_grad_x) + torch.abs(out_grad_y - target_grad_y))
 
+        # smooth_l1_depth = self.criterion_smooth_l1(output_depth, label)
+
+        # 2. 나머지 로스는 0으로 처리 (변수 유지를 위해)
+        # .detach()를 써서 역전파에 영향을 주지 않게 합니다.
+        # lpips_color_loss = torch.tensor(0.0, device=DEVICE)
+        lpips_depth_loss = torch.tensor(0.0, device=DEVICE)
+        # output_depth_rgb = output_depth.repeat(1,3,1,1) # make RGB depth
+        # label_depth_rgb = label.repeat(1,3,1,1) # make RGB depth
+        # lpips_depth_loss = torch.mean(self.criterion_lpips(output_depth_rgb, label_depth_rgb))       
+        
+        # si_log_loss = torch.tensor(0.0, device=DEVICE)
+        # 뎁스 전용 SILog Loss 적용 (0.5 가중치 제안)
+        silog_loss = self.criterion_silog(output_depth, label)
+
+        # 3. Total Loss (현재는 SmoothL1들의 합)
+        # total_loss = smooth_l1_color + smooth_l1_depth + 0.5 * silog_loss
+        # total_loss = smooth_l1_depth + 0.7 * silog_loss
+
+        # total_loss = smooth_l1_color + smooth_l1_depth + 0.7 *silog_loss + lpips_color_loss
         total_loss = smooth_l1_color + \
                      smooth_l1_depth + \
                      0.7 * silog_loss + \

@@ -92,7 +92,7 @@ def npz_loader(path):
     
     # 3. [핵심] 정답 라벨도 모델 입력과 똑같이 256x256으로 리사이즈
     # Loss 계산 시 차원을 맞추기 위해 반드시 필요합니다.
-    sample = F.interpolate(sample.unsqueeze(0), size=(256, 256), mode='bilinear', align_corners=False).squeeze(0)
+    sample = F.interpolate(sample.unsqueeze(0), size=(512, 512), mode='bilinear', align_corners=False).squeeze(0)
     
     return sample
 

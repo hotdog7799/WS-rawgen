@@ -1,4 +1,5 @@
 import os
+os.environ["WANDB_MODE"] = "disabled"
 import torch
 import numpy as np
 import scipy.io as sio
@@ -10,18 +11,18 @@ import time
 
 # 기존 모델 및 유틸 불러오기 (경로 주의)
 from mwdnet_cpsf_rgbd_model import MWDNet_CPSF_RGBD_large_w_softmax_change_wiener_reg
-from forHJ import MWDNet_CPSF_depth
+from forHJ_light import MWDNet_CPSF_depth_light as MWDNet_CPSF_depth
 from train_utils import get_depth_range
 from train_the_thomas import load_psf_for_train
 
 timestamp = time.strftime("%y%m%d-%H%M%S")
 # 1. 설정 (HPARAMS)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-MODEL_PATH = "/home/hjahn/depth/WS-rawgen/pth_256_color/model_51ch/20260113-023527_model_aiobio.pth"
+MODEL_PATH = "/home/hjahn/depth/WS-rawgen/pth_512_uv/model_51ch/20260205-122851_model_aiobio.pth"
 RAW_IMAGE_DIR = "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/validate_jig_uv/0/" # 실제 이미지 경로
 SAVE_DIR = "../inference_results/"
 PSF_DIR = "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260112/psf_color_aligned/"
-IMG_SIZE = (256, 256)
+IMG_SIZE = (512, 512)
 
 SAVE_DIR = os.path.join(SAVE_DIR,timestamp)
 

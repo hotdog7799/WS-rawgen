@@ -1,6 +1,6 @@
 import os
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0" 
+os.environ["CUDA_VISIBLE_DEVICES"] = "3" 
 
 import torch
 import numpy as np
@@ -18,7 +18,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor # 비동기 저장을 위한 라이브러리
 import time
 
-# 저장은 SSD에
+
 # shutil 같은 copy는 나중에
 # queue size 조절
 
@@ -34,16 +34,17 @@ HPARAMS = {
     # 'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/251223_HJC/gray_center_psf/",
     # 'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260112/psf_color_aligned/", #260112
     # 'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260113_wh_nofilter_psf_aligned_gray/", #260113
-    'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260113_wh_nofilter_psf_aligned_color/", #260113
+    # 'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260113_wh_nofilter_psf_aligned_color/", #260113
+    'PSF_DIR': "/home/hjahn/AIOBIO_nas/cam2/260205_psf_color_aligned/", #260205
     # 'SAVE_PATH': "/home/hjahn/mnt/nas/Research/HJA/",
-    'SAVE_PATH': "/home/hjahn/mnt/ssd1/data/hjahn/syn_raw_image_white_nofilter_color/",
+    'SAVE_PATH': "/home/hjahn/mnt/nas/Research/HJA/syn_raw_cam2/",
     'BATCH_SIZE': 32, 
     'NUM_WORKERS': 12, # 너무 높으면 오히려 CPU 오버헤드 발생 가능, 12~16 권장
     'SCENE_SIZE': (576, 1024),
     'FFT_SIZE': (1152, 2048),
     'QUANTIZE_NUM': 51,
 }
-
+GLOBAL_SCALE_FACTOR = 1.5
 timestamp = datetime.now().strftime("%m%d_%H%M%S")
 HPARAMS['SAVE_PATH'] = os.path.join(HPARAMS['SAVE_PATH'], timestamp)
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -96,7 +97,7 @@ def quantize_and_simulate_optimized(image, label, bg_batch, psf_fft_stack, hpara
         if torch.sum(mask) == 0 and i != D - 1: continue
 
         # Scene Padding & FFT
-        scene_padded = F.pad(curr_scene, (pad_w, pad_w, pad_h, pad_h), mode='replicate')
+        scene_padded = F.pad(curr_scene, (pad_w, pad_w, pad_h, pad_h), mode='constant', value=0)
         scene_fft = torch.fft.rfft2(scene_padded)
         
         # 미리 계산된 PSF FFT 사용 (이 부분에서 매 루프당 FFT 1번씩 절약)
@@ -175,9 +176,11 @@ def main():
             idx_str = str(global_idx).zfill(5)
             
             single_raw = raw_batch[b:b+1]
-            raw_max = torch.max(single_raw)
-            if raw_max > 0: single_raw = single_raw / raw_max
-            
+            # raw_max = torch.max(single_raw)
+            # if raw_max > 0: single_raw = single_raw / raw_max
+            single_raw = single_raw / GLOBAL_SCALE_FACTOR
+            single_raw = torch.clamp(single_raw, 0, 1) # 1.0을 넘으면 센서 포화(Saturation)로 간주
+
             # 노이즈 및 uint8 변환 (CPU로 넘기기 전 최소한의 연산)
             raw_noisy = torch.clamp(single_raw + torch.randn_like(single_raw) * random.uniform(0.01, 0.03), 0, 1)
             raw_np = (raw_noisy[0].cpu().permute(1, 2, 0).numpy() * 255).astype(np.uint8)
