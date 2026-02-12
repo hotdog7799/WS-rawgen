@@ -18,7 +18,7 @@ from train_the_thomas import load_psf_for_train
 timestamp = time.strftime("%y%m%d-%H%M%S")
 # 1. 설정 (HPARAMS)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-MODEL_PATH = "/home/hjahn/depth/WS-rawgen/pth_512_uv/model_51ch/20260205-122851_model_aiobio.pth"
+MODEL_PATH = "/home/hjahn/depth/WS-rawgen/pth_512_uv/model_51ch/20260209-080301_model_aiobio.pth"
 RAW_IMAGE_DIR = "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/validate_jig_uv/0/" # 실제 이미지 경로
 SAVE_DIR = "../inference_results/"
 PSF_DIR = "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260112/psf_color_aligned/"

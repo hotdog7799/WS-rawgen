@@ -28,23 +28,23 @@ import time
 HPARAMS = {
     # 'IMAGE_PATH': '/home/hjahn/mnt/ssd2/dataset_ssd2/HJA/HJA_data/20251230_152424_20000_8/image/0',
     # 'LABEL_PATH': '/home/hjahn/mnt/ssd2/dataset_ssd2/HJA/HJA_data/20251230_152424_20000_8/label/0',
-    'IMAGE_PATH': "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/image/0",
-    'LABEL_PATH': "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/label/0",
+    'IMAGE_PATH': "/home/hjahn/mnt/nas/Research/HJA/rendering/20260211_192340_20000/image/0",
+    'LABEL_PATH': "/home/hjahn/mnt/nas/Research/HJA/rendering/20260211_192340_20000/label/0",
     'BG_PATH': '/home/hjahn/mnt/nas/_datasets/mirflickr',
     # 'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/251223_HJC/gray_center_psf/",
     # 'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260112/psf_color_aligned/", #260112
     # 'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260113_wh_nofilter_psf_aligned_gray/", #260113
-    # 'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260113_wh_nofilter_psf_aligned_color/", #260113
-    'PSF_DIR': "/home/hjahn/AIOBIO_nas/cam2/260205_psf_color_aligned/", #260205
+    'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260113_wh_nofilter_psf_aligned_color/", #260113 cam1
+    # 'PSF_DIR': "/home/hjahn/AIOBIO_nas/cam2/260205_psf_color_aligned/", #260205 cam2 
     # 'SAVE_PATH': "/home/hjahn/mnt/nas/Research/HJA/",
-    'SAVE_PATH': "/home/hjahn/mnt/nas/Research/HJA/syn_raw_cam2/",
+    'SAVE_PATH': "/home/hjahn/mnt/nas/Research/HJA/syn_raw_light_object_gen_cam1/",
     'BATCH_SIZE': 32, 
     'NUM_WORKERS': 12, # 너무 높으면 오히려 CPU 오버헤드 발생 가능, 12~16 권장
     'SCENE_SIZE': (576, 1024),
     'FFT_SIZE': (1152, 2048),
     'QUANTIZE_NUM': 51,
 }
-GLOBAL_SCALE_FACTOR = 1.5
+GLOBAL_SCALE_FACTOR = 1.2
 timestamp = datetime.now().strftime("%m%d_%H%M%S")
 HPARAMS['SAVE_PATH'] = os.path.join(HPARAMS['SAVE_PATH'], timestamp)
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'

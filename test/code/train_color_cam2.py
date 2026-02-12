@@ -2,7 +2,7 @@ import os
 from typing import Any, Dict  # 상단 import에 추가하세요
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"  
 
 # import config
 from train_utils import *
@@ -59,7 +59,7 @@ HPARAMS = {
     "H":512,
     "W":512,
     # [수정] SSD2에 저장된 실제 경로 (마지막 /0/ 제외)
-    "DATA_ROOT_RAW": "/home/hjahn/mnt/nas/Research/HJA/syn_raw_cam2/0206_104550/raw/",
+    "DATA_ROOT_RAW": "/home/hjahn/mnt/nas/Research/HJA/cam2_syn_raw/0206_173449/raw/",
     "DATA_ROOT_IMAGE": "/home/hjahn/mnt/nas/Research/HJA/dataset/image/",
     "DATA_ROOT_LABEL": "/home/hjahn/mnt/nas/Research/HJA/dataset/label/",
     "DATA_ROOT_VAL_REAL": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/cam2/260205-raw/",
@@ -108,7 +108,7 @@ print("Shape of Depth Range: ", TPARAMS["depth_range"].shape)
 print("Depth Range: ", TPARAMS["depth_range"])
 
 name_tmp = (
-    START_DATE + "aiobio-5mm~10mm objects"
+    START_DATE + "cam2"
 )  # Notation for individual wandb log name
 NOTES = (
     name_tmp
@@ -127,7 +127,6 @@ wandb.init(
     save_code=True,
 )
 
-
 def wandb_log(loglist, epoch, note):
     for key, val in loglist.items():
         try:
@@ -144,7 +143,6 @@ def wandb_log(loglist, epoch, note):
             },
             step=epoch + 1,
         )
-
 
 class LossFunction(nn.Module):
     def __init__(self):
@@ -178,7 +176,18 @@ class LossFunction(nn.Module):
 
         # 3. weighted Depth SmoothL1 loss
         raw_l1_depth = self.criterion_smooth_l1(output_depth, label)
-        depth_weight = roi_mask * 7.0 + (1 - roi_mask) * 1.0
+        # [수정] ROI Mask + 비대칭 페널티 (Asymmetric Penalty)
+        # 치아 영역(roi_mask=1)인데, 예측값(output_depth)이 정답(label)보다 작다면(즉, 배경인 0쪽으로 간다면)
+        # *참고: 깊이 정의에 따라 부호는 반대일 수 있음. 
+        # (여기서는 output_depth가 1.0이 가까운 것, 0.0이 먼 배경이라고 가정 시 -> output_depth < label 인 경우 페널티)
+        # 만약 반대라면 (output > label)로 수정 필요.
+
+        diff = label - output_depth # 정답(치아) - 예측(배경) > 0 이면 구멍이 난 상태
+        under_estimation_mask = (diff > 0).float() * roi_mask
+
+        # 구멍이 난 곳에는 기존 7배 + 추가 10배 = 총 17배 가중치 부여
+        penalty_weight = 1.0 + under_estimation_mask * 10.0 
+        depth_weight = (roi_mask * 7.0 + (1 - roi_mask) * 1.0) * penalty_weight
         smooth_l1_depth = torch.mean(raw_l1_depth * depth_weight)
 
         # 4. depth gradient loss
@@ -187,31 +196,14 @@ class LossFunction(nn.Module):
         loss_grad_x = torch.mean(torch.abs(out_grad_x - target_grad_x))
         loss_grad_y = torch.mean(torch.abs(out_grad_y - target_grad_y))
         grad_loss = loss_grad_x + loss_grad_y
-        # grad_loss = torch.mean(torch.abs(out_grad_x - target_grad_x) + torch.abs(out_grad_y - target_grad_y))
-
-        # smooth_l1_depth = self.criterion_smooth_l1(output_depth, label)
-
-        # 2. 나머지 로스는 0으로 처리 (변수 유지를 위해)
-        # .detach()를 써서 역전파에 영향을 주지 않게 합니다.
-        # lpips_color_loss = torch.tensor(0.0, device=DEVICE)
-        lpips_depth_loss = torch.tensor(0.0, device=DEVICE)
-        # output_depth_rgb = output_depth.repeat(1,3,1,1) # make RGB depth
-        # label_depth_rgb = label.repeat(1,3,1,1) # make RGB depth
-        # lpips_depth_loss = torch.mean(self.criterion_lpips(output_depth_rgb, label_depth_rgb))       
-        
-        # si_log_loss = torch.tensor(0.0, device=DEVICE)
-        # 뎁스 전용 SILog Loss 적용 (0.5 가중치 제안)
+        lpips_depth_loss = torch.tensor(0.0, device=DEVICE)       
         silog_loss = self.criterion_silog(output_depth, label)
-
-        # 3. Total Loss (현재는 SmoothL1들의 합)
-        # total_loss = smooth_l1_color + smooth_l1_depth + 0.5 * silog_loss
-        # total_loss = smooth_l1_depth + 0.7 * silog_loss
-
         # total_loss = smooth_l1_color + smooth_l1_depth + 0.7 *silog_loss + lpips_color_loss
+
         total_loss = smooth_l1_color + \
                      smooth_l1_depth + \
                      0.7 * silog_loss + \
-                     0.5 * grad_loss + \
+                     0.2 * grad_loss + \
                         lpips_color_loss
 
         total_loss = total_loss.mean()
@@ -414,9 +406,9 @@ def validate_real(val_parameters):
     # padding을 주어 이미지 사이 경계를 만듭니다.
     result = {}
     # make_grid 결과는 [C, H_grid, W_grid] 형태의 3D 텐서가 됩니다.
-    result["input"] = make_grid(cat_inputs, nrow=4, padding=2)
-    result["output_color"] = make_grid(cat_intensities, nrow=4, padding=2)
-    result["output_depth"] = make_grid(cat_depths, nrow=4, padding=2)
+    result["input"] = make_grid(cat_inputs, nrow=8, padding=2)
+    result["output_color"] = make_grid(cat_intensities, nrow=8, padding=2)
+    result["output_depth"] = make_grid(cat_depths, nrow=8, padding=2)
     
     return result
 

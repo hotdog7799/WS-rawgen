@@ -115,6 +115,22 @@ class Upconvnext(nn.Module):
         w = self.caw_block(w)
         return w
 
+class UpDS(nn.Module):
+    """Upscaling then DoubleConvDS (Lighter version of Up path)"""
+    def __init__(self, in_channels, out_channels):
+        super(UpDS, self).__init__()
+        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.conv = DoubleConvDS(in_channels, out_channels)
+
+    def forward(self, x1, x2):
+        x1 = self.up(x1)
+        diffY = x2.size()[2] - x1.size()[2]
+        diffX = x2.size()[3] - x1.size()[3]
+        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
+                        diffY // 2, diffY - diffY // 2])
+        x = torch.cat([x2, x1], dim=1)
+        return self.conv(x)
+
 class OutConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(OutConv, self).__init__()
@@ -214,17 +230,17 @@ class MWDNet_CPSF_depth_light(nn.Module):
 
         # Decoder
         self.up1 = Upconvnext(channels_list[3] + channels_list[3], channels_list[2]) 
-        self.up2 = Upconvnext(channels_list[2] + channels_list[2], channels_list[1]) 
-        self.up3 = Upconvnext(channels_list[1] + channels_list[1], channels_list[0]) 
-        self.up4 = Upconvnext(channels_list[0] + channels_list[0], channels_list[0]) 
+        self.up2 = UpDS(channels_list[2] + channels_list[2], channels_list[1]) 
+        self.up3 = UpDS(channels_list[1] + channels_list[1], channels_list[0]) 
+        self.up4 = UpDS(channels_list[0] + channels_list[0], channels_list[0]) 
         
         self.outc = OutConv(channels_list[0], n_classes + 3)
 
         # Main Encoder
-        self.inc = ConvNextBlock(n_channels, channels_list[0])
-        self.down1 = DownConvNext(channels_list[0], channels_list[1])
-        self.down2 = DownConvNext(channels_list[1], channels_list[2])
-        self.down3 = DownConvNext(channels_list[2], channels_list[3])
+        self.inc = DoubleConvDS(n_channels, channels_list[0])
+        self.down1 = DownG_DS(channels_list[0], channels_list[1])
+        self.down2 = DownG_DS(channels_list[1], channels_list[2])
+        self.down3 = DownG_DS(channels_list[2], channels_list[3])
         self.down4 = DownConvNext(channels_list[3], channels_list[3]) # Bottleneck
         
         self.w1 = W2(channels_list[0], h[0], w[0], h_p[0], w_p[0], k=1) 

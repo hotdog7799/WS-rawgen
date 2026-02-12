@@ -2,14 +2,14 @@ import os
 from typing import Any, Dict  # 상단 import에 추가하세요
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1,2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
 
 # import config
 from train_utils import *
 
 # from MWDNs import MWDNet_CPSF_RGBD_large_w_softmax_output_add_DepthRefine
 from mwdnet_cpsf_rgbd_model import MWDNet_CPSF_RGBD_large_w_softmax_change_wiener_reg
-from forHJ_light import MWDNet_CPSF_depth_light as MWDNet_CPSF_depth
+from forHJ_light_modulated import MWDNet_CPSF_depth_light as MWDNet_CPSF_depth
 
 import datetime
 from PIL import Image
@@ -51,7 +51,7 @@ scaler = GradScaler()
 HPARAMS = {
     "IN_CHANNEL": 3,
     "OUT_CHANNEL": 51,
-    "BATCH_SIZE": 32, 
+    "BATCH_SIZE": 16, 
     "NUM_WORKERS": 8,
     "TRAINSET_SIZE": 18000,  # 전체 2만장 중 18,000장 학습용
     "EPOCHS_NUM": 1000,
@@ -59,7 +59,7 @@ HPARAMS = {
     "H":512,
     "W":512,
     # [수정] SSD2에 저장된 실제 경로 (마지막 /0/ 제외)
-    "DATA_ROOT_RAW": "/home/hjahn/mnt/ssd1/data/hjahn/syn_raw_image_color/0113_001134/raw/",
+    "DATA_ROOT_RAW": "/home/hjahn/mnt/nas/Research/HJA/cam1_syn_raw/0206_163919/raw/",
     "DATA_ROOT_IMAGE": "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/image/",
     "DATA_ROOT_LABEL": "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/label/",
     "DATA_ROOT_VAL_REAL": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260112/rawimage_uv/",
@@ -108,7 +108,7 @@ print("Shape of Depth Range: ", TPARAMS["depth_range"].shape)
 print("Depth Range: ", TPARAMS["depth_range"])
 
 name_tmp = (
-    START_DATE + "aiobio-5mm~10mm objects"
+    START_DATE + "cam1"
 )  # Notation for individual wandb log name
 NOTES = (
     name_tmp
@@ -189,7 +189,7 @@ class LossFunction(nn.Module):
 
         # 구멍이 난 곳에는 기존 7배 + 추가 10배 = 총 17배 가중치 부여
         penalty_weight = 1.0 + under_estimation_mask * 10.0 
-        depth_weight = (roi_mask * 15.0 + (1 - roi_mask) * 1.0) * penalty_weight
+        depth_weight = (roi_mask * 7.0 + (1 - roi_mask) * 1.0) * penalty_weight
         smooth_l1_depth = torch.mean(raw_l1_depth * depth_weight)
 
         # 4. depth gradient loss
@@ -205,7 +205,7 @@ class LossFunction(nn.Module):
         total_loss = smooth_l1_color + \
                      smooth_l1_depth + \
                      0.7 * silog_loss + \
-                     0.5 * grad_loss + \
+                     0.2 * grad_loss + \
                         lpips_color_loss
 
         total_loss = total_loss.mean()
@@ -408,9 +408,9 @@ def validate_real(val_parameters):
     # padding을 주어 이미지 사이 경계를 만듭니다.
     result = {}
     # make_grid 결과는 [C, H_grid, W_grid] 형태의 3D 텐서가 됩니다.
-    result["input"] = make_grid(cat_inputs, nrow=4, padding=2)
-    result["output_color"] = make_grid(cat_intensities, nrow=4, padding=2)
-    result["output_depth"] = make_grid(cat_depths, nrow=4, padding=2)
+    result["input"] = make_grid(cat_inputs, nrow=8, padding=2)
+    result["output_color"] = make_grid(cat_intensities, nrow=8, padding=2)
+    result["output_depth"] = make_grid(cat_depths, nrow=8, padding=2)
     
     return result
 
