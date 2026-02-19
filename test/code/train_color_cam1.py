@@ -2,7 +2,7 @@ import os
 from typing import Any, Dict  # 상단 import에 추가하세요
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 
 # import config
 from train_utils import *
@@ -59,13 +59,12 @@ HPARAMS = {
     "H":512,
     "W":512,
     # [수정] SSD2에 저장된 실제 경로 (마지막 /0/ 제외)
-    "DATA_ROOT_RAW": "/home/hjahn/mnt/nas/Research/HJA/cam1_syn_raw/0206_163919/raw/",
-    "DATA_ROOT_IMAGE": "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/image/",
-    "DATA_ROOT_LABEL": "/home/hjahn/mnt/ssd1/data/hjahn/scene_and_label/label/",
-    "DATA_ROOT_VAL_REAL": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260112/rawimage_uv/",
-    # "PSF_DIR": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/251223_HJC/gray_center_psf/",
+    "DATA_ROOT_RAW": "/home/hjahn/mnt/nas/Research/HJA/syn_raw_light_object_gen_cam1/0212_102452/raw/",
+    "DATA_ROOT_IMAGE": "/home/hjahn/mnt/nas/Research/HJA/rendering/20260211_192340_20000/image/",
+    "DATA_ROOT_LABEL": "/home/hjahn/mnt/nas/Research/HJA/rendering/20260211_192340_20000/label/",
+    "DATA_ROOT_VAL_REAL": "/home/hjahn/AIOBIO_nas/260212/",
     "PSF_DIR": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260112/psf_color_aligned/",
-    "WEIGHT_SAVE_PATH": "/home/hjahn/depth/WS-rawgen/pth_512_uv/",
+    "WEIGHT_SAVE_PATH": "/home/hjahn/mnt/nas/homes/HJA/lensless-depth/WS-rawgen/pth_512_uv-light-newobj/",
     "CHECKPOINT_PATH": "",
 }
 
@@ -158,55 +157,56 @@ class LossFunction(nn.Module):
         # 나머지는 일단 주석 처리 (메모리 및 초기화 오류 방지)
         self.criterion_lpips = nn.DataParallel(lpips.LPIPS(net='vgg')).to(DEVICE)
         # self.criterion_silog_loss = scale_invariant_log_loss_v2_lambda(...)
-    def get_gradient(self, x):
-        # depth의 급격한 변화를 감지하도록 하는 함수
-        h_x = x.size()[-2]
-        w_x = x.size()[-1]
-        # gradient in x direction
-        grad_y = torch.abs(x[:, :, 1:, :] - x[:, :, :-1, :])
-        # gradient in y direction
-        grad_x = torch.abs(x[:, :, :, 1:] - x[:, :, :, :-1])
-        return grad_x, grad_y
+    # def get_gradient(self, x):
+    #     # depth의 급격한 변화를 감지하도록 하는 함수
+    #     h_x = x.size()[-2]
+    #     w_x = x.size()[-1]
+    #     # gradient in x direction
+    #     grad_y = torch.abs(x[:, :, 1:, :] - x[:, :, :-1, :])
+    #     # gradient in y direction
+    #     grad_x = torch.abs(x[:, :, :, 1:] - x[:, :, :, :-1])
+    #     return grad_x, grad_y
     
     def forward(self, output_color, output_depth, label_color, label, epoch=0):
         # 1. color loss
         smooth_l1_color = self.criterion_smooth_l1(output_color, label_color)
         lpips_color_loss = torch.mean(self.criterion_lpips(output_color, label_color))
-
+        smooth_l1_depth = self.criterion_smooth_l1(output_depth, label)
         # 2. ROI mask
-        roi_mask = (label > 0.05).float()
+        # roi_mask = (label > 0.05).float()
 
-        # 3. weighted Depth SmoothL1 loss
-        raw_l1_depth = self.criterion_smooth_l1(output_depth, label)
-        # [수정] ROI Mask + 비대칭 페널티 (Asymmetric Penalty)
-        # 치아 영역(roi_mask=1)인데, 예측값(output_depth)이 정답(label)보다 작다면(즉, 배경인 0쪽으로 간다면)
-        # *참고: 깊이 정의에 따라 부호는 반대일 수 있음. 
-        # (여기서는 output_depth가 1.0이 가까운 것, 0.0이 먼 배경이라고 가정 시 -> output_depth < label 인 경우 페널티)
-        # 만약 반대라면 (output > label)로 수정 필요.
+        # # 3. weighted Depth SmoothL1 loss
+        # raw_l1_depth = self.criterion_smooth_l1(output_depth, label)
+        # # [수정] ROI Mask + 비대칭 페널티 (Asymmetric Penalty)
+        # # 치아 영역(roi_mask=1)인데, 예측값(output_depth)이 정답(label)보다 작다면(즉, 배경인 0쪽으로 간다면)
+        # # *참고: 깊이 정의에 따라 부호는 반대일 수 있음. 
+        # # (여기서는 output_depth가 1.0이 가까운 것, 0.0이 먼 배경이라고 가정 시 -> output_depth < label 인 경우 페널티)
+        # # 만약 반대라면 (output > label)로 수정 필요.
 
-        diff = label - output_depth # 정답(치아) - 예측(배경) > 0 이면 구멍이 난 상태
-        under_estimation_mask = (diff > 0).float() * roi_mask
+        # diff = label - output_depth # 정답(치아) - 예측(배경) > 0 이면 구멍이 난 상태
+        # under_estimation_mask = (diff > 0).float() * roi_mask
 
-        # 구멍이 난 곳에는 기존 7배 + 추가 10배 = 총 17배 가중치 부여
-        penalty_weight = 1.0 + under_estimation_mask * 10.0 
-        depth_weight = (roi_mask * 7.0 + (1 - roi_mask) * 1.0) * penalty_weight
-        smooth_l1_depth = torch.mean(raw_l1_depth * depth_weight)
+        # # 구멍이 난 곳에는 기존 7배 + 추가 10배 = 총 17배 가중치 부여
+        # penalty_weight = 1.0 + under_estimation_mask * 10.0 
+        # depth_weight = (roi_mask * 7.0 + (1 - roi_mask) * 1.0) * penalty_weight
+        # smooth_l1_depth = torch.mean(raw_l1_depth * depth_weight)
 
-        # 4. depth gradient loss
-        out_grad_x, out_grad_y = self.get_gradient(output_depth)
-        target_grad_x, target_grad_y = self.get_gradient(label)
-        loss_grad_x = torch.mean(torch.abs(out_grad_x - target_grad_x))
-        loss_grad_y = torch.mean(torch.abs(out_grad_y - target_grad_y))
-        grad_loss = loss_grad_x + loss_grad_y
+        # # 4. depth gradient loss
+        # out_grad_x, out_grad_y = self.get_gradient(output_depth)
+        # target_grad_x, target_grad_y = self.get_gradient(label)
+        # loss_grad_x = torch.mean(torch.abs(out_grad_x - target_grad_x))
+        # loss_grad_y = torch.mean(torch.abs(out_grad_y - target_grad_y))
+        # grad_loss = loss_grad_x + loss_grad_y
         lpips_depth_loss = torch.tensor(0.0, device=DEVICE)       
         silog_loss = self.criterion_silog(output_depth, label)
         # total_loss = smooth_l1_color + smooth_l1_depth + 0.7 *silog_loss + lpips_color_loss
 
-        total_loss = smooth_l1_color + \
+        total_loss = 0.01 * smooth_l1_color + \
                      smooth_l1_depth + \
-                     0.7 * silog_loss + \
-                     0.2 * grad_loss + \
+                     0.9 * silog_loss + \
                         lpips_color_loss
+                    #  0.2 * grad_loss + \
+                        
 
         total_loss = total_loss.mean()
 
@@ -223,7 +223,8 @@ class LossFunction(nn.Module):
         return (
             total_loss,
             lpips_color_loss,
-            grad_loss,
+            #grad_loss,
+            lpips_depth_loss,
             smooth_l1_color,
             smooth_l1_depth,
             rmse_depth,
@@ -266,7 +267,7 @@ def train(train_parameters):
 
     result = {}
     result["loss"] = 0
-    result["grad_loss"] = 0
+    # result["grad_loss"] = 0
     result["RMSE_depth"] = 0
     # result["LPIPS_color"] = 0
     # result["LPIPS_depth"] = 0
@@ -290,7 +291,7 @@ def train(train_parameters):
                 depth_range * soft_max_depth_stack, dim=1, keepdim=True
             )
 
-            total_loss, _, grad_loss, _, _, rmse_depth, _  = train_parameters["loss_function"](
+            total_loss, _, _, _, _, rmse_depth, _  = train_parameters["loss_function"](
                 intensity, output_depth, label_color, label, i
             )
             loss_to_backward = total_loss / ACCUM_STEPS
@@ -307,7 +308,7 @@ def train(train_parameters):
             train_parameters["optimizer"].zero_grad()  # 업데이트 후 초기화
 
         result["loss"] += total_loss.item()
-        result["grad_loss"] += grad_loss.item()
+        # result["grad_loss"] += grad_loss.item()
         result["RMSE_depth"] += rmse_depth.item()
         # result['LPIPS_color'] += lpips_color_loss
         # result['LPIPS_depth'] += lpips_depth_loss
@@ -320,7 +321,7 @@ def train(train_parameters):
         # break
 
     result["loss"] /= len(train_parameters["trainset_loader"])
-    result["grad_loss"] /= len(train_parameters["trainset_loader"])
+    # result["grad_loss"] /= len(train_parameters["trainset_loader"])
     result["RMSE_depth"] /= len(train_parameters["trainset_loader"])
     result["input"] = image[0]
     result["label"] = label[0]
@@ -335,7 +336,7 @@ def test(test_parameters):
     test_parameters["model"].eval()
     result = {}
     result["loss"] = 0
-    result["grad_loss"] = 0
+    # result["grad_loss"] = 0
     result["RMSE_depth"] = 0
     with torch.no_grad():
         bar = tqdm(
@@ -350,17 +351,17 @@ def test(test_parameters):
                 depth_range * soft_max_depth_stack, dim=1, keepdim=True
             )
 
-            total_loss, _, grad_loss, _, _, rmse_depth, _ = test_parameters["loss_function"](
+            total_loss, _, _, _, _, rmse_depth, _ = test_parameters["loss_function"](
                 intensity, output_depth, label_color, label, i
             )
 
             result["loss"] += total_loss.item()
-            result["grad_loss"] += grad_loss.item()
+            # result["grad_loss"] += grad_loss.item()
             result["RMSE_depth"] += rmse_depth.item()
             # break
 
     result["loss"] /= len(test_parameters["testset_loader"])
-    result["grad_loss"] /= len(test_parameters["testset_loader"])
+    # result["grad_loss"] /= len(test_parameters["testset_loader"])
     result["RMSE_depth"] /= len(test_parameters["testset_loader"])
     result["input"] = image[0]
     result["label"] = label[0]

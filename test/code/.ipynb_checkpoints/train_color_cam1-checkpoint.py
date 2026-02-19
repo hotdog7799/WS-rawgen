@@ -2,14 +2,14 @@ import os
 from typing import Any, Dict  # 상단 import에 추가하세요
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"  
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 
 # import config
 from train_utils import *
 
 # from MWDNs import MWDNet_CPSF_RGBD_large_w_softmax_output_add_DepthRefine
 from mwdnet_cpsf_rgbd_model import MWDNet_CPSF_RGBD_large_w_softmax_change_wiener_reg
-from forHJ_light import MWDNet_CPSF_depth_light as MWDNet_CPSF_depth
+from forHJ_light_modulated import MWDNet_CPSF_depth_light as MWDNet_CPSF_depth
 
 import datetime
 from PIL import Image
@@ -59,12 +59,12 @@ HPARAMS = {
     "H":512,
     "W":512,
     # [수정] SSD2에 저장된 실제 경로 (마지막 /0/ 제외)
-    "DATA_ROOT_RAW": "/home/hjahn/mnt/nas/Research/HJA/syn_raw_light_object_gen_cam2/0212_123338/raw/",
+    "DATA_ROOT_RAW": "/home/hjahn/mnt/nas/Research/HJA/syn_raw_light_object_gen_cam1/0212_102452/raw/",
     "DATA_ROOT_IMAGE": "/home/hjahn/mnt/nas/Research/HJA/rendering/20260211_192340_20000/image/",
     "DATA_ROOT_LABEL": "/home/hjahn/mnt/nas/Research/HJA/rendering/20260211_192340_20000/label/",
-    "DATA_ROOT_VAL_REAL": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/cam2/260205-raw/",
-    "PSF_DIR": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/cam2/260205_psf_color_aligned/",
-    "WEIGHT_SAVE_PATH": "/home/hjahn/mnt/nas/homes/HJA/lensless-depth/WS-rawgen/pth_cam2_512_uv-light-newobj/",
+    "DATA_ROOT_VAL_REAL": "/home/hjahn/AIOBIO_nas/260212/",
+    "PSF_DIR": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260112/psf_color_aligned/",
+    "WEIGHT_SAVE_PATH": "/home/hjahn/mnt/nas/homes/HJA/lensless-depth/WS-rawgen/pth_512_uv-light-newobj/",
     "CHECKPOINT_PATH": "",
 }
 
@@ -107,7 +107,7 @@ print("Shape of Depth Range: ", TPARAMS["depth_range"].shape)
 print("Depth Range: ", TPARAMS["depth_range"])
 
 name_tmp = (
-    START_DATE + "cam2"
+    START_DATE + "cam1"
 )  # Notation for individual wandb log name
 NOTES = (
     name_tmp
@@ -126,6 +126,7 @@ wandb.init(
     save_code=True,
 )
 
+
 def wandb_log(loglist, epoch, note):
     for key, val in loglist.items():
         try:
@@ -142,6 +143,7 @@ def wandb_log(loglist, epoch, note):
             },
             step=epoch + 1,
         )
+
 
 class LossFunction(nn.Module):
     def __init__(self):

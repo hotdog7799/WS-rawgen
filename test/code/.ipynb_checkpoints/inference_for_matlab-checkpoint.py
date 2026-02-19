@@ -69,16 +69,6 @@ def run_inference():
             # 1. Normalized Depth 계산
             depth_norm = 1.0 - torch.sum(depth_range * soft_max_depth_stack, dim=1, keepdim=True)
             
-            # --- DEBUG INFO ---
-            if fname == raw_files[0]: # Print only for the first file
-                print(f"[DEBUG] Processing {fname}")
-                print(f"[DEBUG] Input Raw Size: {raw_img.size}")
-                print(f"[DEBUG] Tensor Shape: {input_tensor.shape}")
-                print(f"[DEBUG] Intensity Shape: {intensity.shape}, Range: {intensity.min().item():.4f} ~ {intensity.max().item():.4f}")
-                print(f"[DEBUG] Depth Norm Shape: {depth_norm.shape}, Range: {depth_norm.min().item():.4f} ~ {depth_norm.max().item():.4f}")
-                print(f"[DEBUG] PSF Tensor Max: {psf_tensor.max().item()}, Min: {psf_tensor.min().item()}")
-            # ------------------
-            
             # [수정] 원본 해상도가 아닌, 계산한 '적당한' 9:16 사이즈로 보간
             intensity_resized = torch.nn.functional.interpolate(
                 intensity, size=(target_h, target_w), mode='bicubic', align_corners=False

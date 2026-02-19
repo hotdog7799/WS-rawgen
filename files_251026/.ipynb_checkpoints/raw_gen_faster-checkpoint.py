@@ -40,7 +40,7 @@ HPARAMS = {
     'FFT_SIZE': (1152, 2048),
     'QUANTIZE_NUM': 51,
 }
-GLOBAL_SCALE_FACTOR = 0.01
+GLOBAL_SCALE_FACTOR = 0.08
 timestamp = datetime.now().strftime("%m%d_%H%M%S")
 HPARAMS['SAVE_PATH'] = os.path.join(HPARAMS['SAVE_PATH'], timestamp)
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -181,19 +181,9 @@ def main():
             single_raw = raw_batch[b:b+1]
             # raw_max = torch.max(single_raw)
             # if raw_max > 0: single_raw = single_raw / raw_max
-            # single_raw = single_raw / GLOBAL_SCALE_FACTOR
-            # single_raw = torch.clamp(single_raw, 0, 1) # 1.0을 넘으면 센서 포화(Saturation)로 간주
-            
-            # 1. Auto-Exposure (현재 이미지의 최대값을 구함)
-            raw_max = torch.max(single_raw)
-            
-            if raw_max > 0:
-                # 2. 랜덤 노출 부여: 항상 1.0(Max)으로 꽉 채우지 않고, 
-                # 0.6 ~ 1.0 사이의 랜덤한 Peak 밝기를 가지도록 설정 (실제 촬영 환경의 밝기 변화 모사)
-                target_peak = random.uniform(0.6, 1.0)
-                single_raw = (single_raw / raw_max) * target_peak
-            
-            single_raw = torch.clamp(single_raw, 0, 1)
+            single_raw = single_raw / GLOBAL_SCALE_FACTOR
+            single_raw = torch.clamp(single_raw, 0, 1) # 1.0을 넘으면 센서 포화(Saturation)로 간주
+
             # 노이즈 및 uint8 변환 (CPU로 넘기기 전 최소한의 연산)
             raw_noisy = torch.clamp(single_raw + torch.randn_like(single_raw) * random.uniform(0.01, 0.03), 0, 1)
             raw_np = (raw_noisy[0].cpu().permute(1, 2, 0).numpy() * 255).astype(np.uint8)
