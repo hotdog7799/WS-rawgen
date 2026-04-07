@@ -12,16 +12,20 @@ import time
 # 기존 모델 및 유틸 불러오기 (경로 주의)
 from mwdnet_cpsf_rgbd_model import MWDNet_CPSF_RGBD_large_w_softmax_change_wiener_reg
 from forHJ_light_modulated import MWDNet_CPSF_depth_light as MWDNet_CPSF_depth
+# from forHJ_light import MWDNet_CPSF_depth_light as MWDNet_CPSF_depth
 from train_utils import get_depth_range
 from train_the_thomas import load_psf_for_train
 
 timestamp = time.strftime("%y%m%d-%H%M%S")
 # 1. 설정 (HPARAMS)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-MODEL_PATH = "/home/hjahn/HJA_nas/lensless-depth/WS-rawgen/pth_512_uv-light-newobj/model_51ch/20260214-090327_model_aiobio.pth"
-RAW_IMAGE_DIR = "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/validate_jig_uv/0/" # 실제 이미지 경로
+MODEL_PATH = "/home/hjahn/HJA_nas/lensless-depth/WS-rawgen/pth_512_uv-light-newobj/model_51ch/20260223-132807_model_aiobio.pth" #cam1
+# MODEL_PATH = "/home/hjahn/HJA_nas/lensless-depth/WS-rawgen/pth_cam2_512_uv-light-newobj/model_51ch/20260223-042858_model_aiobio.pth" #cam2
+# RAW_IMAGE_DIR = "/home/hjahn/AIOBIO_nas/260226/cam1/" # 실제 이미지 경로
+RAW_IMAGE_DIR = "/home/hjahn/AIOBIO_nas/260312/"
 SAVE_DIR = "../inference_results/"
 PSF_DIR = "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260112/psf_color_aligned/"
+# PSF_DIR = "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/cam2/260205_psf_color_aligned/"
 IMG_SIZE = (512, 512)
 
 SAVE_DIR = os.path.join(SAVE_DIR,timestamp)

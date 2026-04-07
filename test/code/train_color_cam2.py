@@ -2,14 +2,14 @@ import os
 from typing import Any, Dict  # 상단 import에 추가하세요
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"  
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"  
 
 # import config
 from train_utils import *
 
 # from MWDNs import MWDNet_CPSF_RGBD_large_w_softmax_output_add_DepthRefine
 from mwdnet_cpsf_rgbd_model import MWDNet_CPSF_RGBD_large_w_softmax_change_wiener_reg
-from forHJ_light import MWDNet_CPSF_depth_light as MWDNet_CPSF_depth
+from forHJ_light_modulated import MWDNet_CPSF_depth_light as MWDNet_CPSF_depth
 
 import datetime
 from PIL import Image
@@ -51,7 +51,7 @@ scaler = GradScaler()
 HPARAMS = {
     "IN_CHANNEL": 3,
     "OUT_CHANNEL": 51,
-    "BATCH_SIZE": 16, 
+    "BATCH_SIZE": 8, 
     "NUM_WORKERS": 8,
     "TRAINSET_SIZE": 18000,  # 전체 2만장 중 18,000장 학습용
     "EPOCHS_NUM": 1000,
@@ -59,7 +59,8 @@ HPARAMS = {
     "H":512,
     "W":512,
     # [수정] SSD2에 저장된 실제 경로 (마지막 /0/ 제외)
-    "DATA_ROOT_RAW": "/home/hjahn/mnt/nas/Research/HJA/syn_raw_light_object_gen_cam2/0212_123338/raw/",
+    # "DATA_ROOT_RAW": "/home/hjahn/mnt/nas/Research/HJA/syn_raw_light_object_gen_cam2/0212_123338/raw/",
+    'DATA_ROOT_RAW': "/home/hjahn/mnt/nas/Research/HJA/syn_raw_light_object_gen_cam2/0219_064527/raw/",
     "DATA_ROOT_IMAGE": "/home/hjahn/mnt/nas/Research/HJA/rendering/20260211_192340_20000/image/",
     "DATA_ROOT_LABEL": "/home/hjahn/mnt/nas/Research/HJA/rendering/20260211_192340_20000/label/",
     "DATA_ROOT_VAL_REAL": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/cam2/260205-raw/",
@@ -93,7 +94,7 @@ def load_psf_for_train(psf_dir, target_size=(HPARAMS["H"], HPARAMS["W"])):
         # v2.functional 사용
         psf_t = v2.functional.to_image(psf_img).to(torch.float32)
         psf_t = v2.functional.resize(psf_t, target_size)
-        print(psf_t.max())
+        # print(psf_t.max())
         psf_t = psf_t / 255.
         # psf_t /= torch.sum(psf_t) + 1e-8  # L1 Normalization
         psf_stack.append(psf_t)

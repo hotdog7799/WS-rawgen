@@ -1,8 +1,9 @@
 import os
+from functools import partial
 from typing import Any, Dict  # 상단 import에 추가하세요
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 # import config
 from train_utils import *
@@ -58,11 +59,20 @@ HPARAMS = {
     "LR": 1e-4,
     "H":512,
     "W":512,
+    # Square center crop on scene/depth (e.g. 576x1024) before resize to HxW. None = full-frame resize only.
+    "CENTER_CROP": 256,
     # [수정] SSD2에 저장된 실제 경로 (마지막 /0/ 제외)
-    "DATA_ROOT_RAW": "/home/hjahn/mnt/nas/Research/HJA/syn_raw_light_object_gen_cam1/0212_102452/raw/",
-    "DATA_ROOT_IMAGE": "/home/hjahn/mnt/nas/Research/HJA/rendering/20260211_192340_20000/image/",
-    "DATA_ROOT_LABEL": "/home/hjahn/mnt/nas/Research/HJA/rendering/20260211_192340_20000/label/",
-    "DATA_ROOT_VAL_REAL": "/home/hjahn/AIOBIO_nas/260212/",
+    # "DATA_ROOT_RAW": "/home/hjahn/mnt/nas/Research/HJA/syn_raw_light_object_gen_cam1/0212_102452/raw/",
+
+    # "DATA_ROOT_RAW": "/home/hjahn/mnt/nas/Research/HJA/syn_raw_light_object_gen_cam1/0219_154229/raw/",
+    # "DATA_ROOT_IMAGE": "/home/hjahn/mnt/nas/Research/HJA/rendering/20260211_192340_20000/image/",
+    # "DATA_ROOT_LABEL": "/home/hjahn/mnt/nas/Research/HJA/rendering/20260211_192340_20000/label/",
+
+    "DATA_ROOT_RAW": "/home/hjahn/mnt/nas/Research/HJA/syn_raw_light_object_gen_cam1/0401_124423/raw",
+    "DATA_ROOT_IMAGE": "/home/hjahn/mnt/nas/Research/HJA/rendering/20260324_133624_20000/image",
+    "DATA_ROOT_LABEL": "/home/hjahn/mnt/nas/Research/HJA/rendering/20260324_133624_20000/label",
+    
+    "DATA_ROOT_VAL_REAL": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260212/",
     "PSF_DIR": "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260112/psf_color_aligned/",
     "WEIGHT_SAVE_PATH": "/home/hjahn/mnt/nas/homes/HJA/lensless-depth/WS-rawgen/pth_512_uv-light-newobj/",
     "CHECKPOINT_PATH": "",
@@ -93,7 +103,7 @@ def load_psf_for_train(psf_dir, target_size=(HPARAMS["H"], HPARAMS["W"])):
         # v2.functional 사용
         psf_t = v2.functional.to_image(psf_img).to(torch.float32)
         psf_t = v2.functional.resize(psf_t, target_size)
-        print(psf_t.max())
+        # print(psf_t.max())
         psf_t = psf_t / 255.
         # psf_t /= torch.sum(psf_t) + 1e-8  # L1 Normalization
         psf_stack.append(psf_t)
@@ -125,6 +135,20 @@ wandb.init(
     name=name_tmp,
     save_code=True,
 )
+
+
+def build_image_transform(h, w, center_crop=None):
+    """Optional square center crop, then resize to (h, w). Matches npz_loader geometry."""
+    steps = [
+        v2.ToImage(),
+        v2.ToDtype(torch.float32, scale=True),
+    ]
+    if center_crop is not None:
+        steps.append(v2.CenterCrop((center_crop, center_crop)))
+    steps.append(
+        v2.Resize((h, w), interpolation=v2.InterpolationMode.BICUBIC),
+    )
+    return v2.Compose(steps)
 
 
 def wandb_log(loglist, epoch, note):
@@ -428,18 +452,26 @@ def main():
         f"Depth range (normalized) step: {TPARAMS['depth_range'][1] - TPARAMS['depth_range'][0]:.4f}"
     )
 
-    transform = v2.Compose(
-        [
-            v2.ToImage(),
-            v2.ToDtype(torch.float32, scale=True),
-            v2.Resize((HPARAMS["H"], HPARAMS["W"]), interpolation=v2.InterpolationMode.BICUBIC),
-        ]
+    crop = HPARAMS.get("CENTER_CROP")
+    transform = build_image_transform(
+        HPARAMS["H"], HPARAMS["W"], center_crop=crop
     )
+    label_loader = partial(
+        npz_loader,
+        center_crop=crop,
+        out_size=(HPARAMS["H"], HPARAMS["W"]),
+    )
+    if crop is not None:
+        print(
+            f"Preprocess: center crop {crop}x{crop} -> resize {HPARAMS['H']}x{HPARAMS['W']}"
+        )
+    else:
+        print(f"Preprocess: full-frame resize -> {HPARAMS['H']}x{HPARAMS['W']}")
 
     # 전체 데이터셋 로드
     full_raw = ImageFolder(root=HPARAMS["DATA_ROOT_RAW"], transform=transform)
     full_label = DatasetFolder(
-        root=HPARAMS["DATA_ROOT_LABEL"], loader=npz_loader, extensions=[".npz"]
+        root=HPARAMS["DATA_ROOT_LABEL"], loader=label_loader, extensions=[".npz"]
     )
     full_image = ImageFolder(root=HPARAMS["DATA_ROOT_IMAGE"], transform=transform)
     # 실제 촬영 이미지는 레이블이 없으므로 ImageFolder를 쓰되 레이블은 무시합니다.

@@ -1,6 +1,6 @@
 import os
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "3" 
+os.environ["CUDA_VISIBLE_DEVICES"] = "0" 
 
 import torch
 import numpy as np
@@ -28,12 +28,15 @@ import time
 HPARAMS = {
     # 'IMAGE_PATH': '/home/hjahn/mnt/ssd2/dataset_ssd2/HJA/HJA_data/20251230_152424_20000_8/image/0',
     # 'LABEL_PATH': '/home/hjahn/mnt/ssd2/dataset_ssd2/HJA/HJA_data/20251230_152424_20000_8/label/0',
-    'IMAGE_PATH': "/home/hjahn/mnt/nas/Research/HJA/rendering/20260211_192340_20000/image/0",
-    'LABEL_PATH': "/home/hjahn/mnt/nas/Research/HJA/rendering/20260211_192340_20000/label/0",
+    # 'IMAGE_PATH': "/home/hjahn/mnt/nas/Research/HJA/rendering/20260211_192340_20000/image/0",
+    # 'LABEL_PATH': "/home/hjahn/mnt/nas/Research/HJA/rendering/20260211_192340_20000/label/0",
+    #260401
+    'IMAGE_PATH': "/home/hjahn/mnt/nas/Research/HJA/rendering/20260324_133624_20000/image/0",
+    'LABEL_PATH': "/home/hjahn/mnt/nas/Research/HJA/rendering/20260324_133624_20000/label/0",
     'BG_PATH': '/home/hjahn/mnt/nas/_datasets/mirflickr',
-    'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260112/psf_color_aligned/",
-    # 'PSF_DIR': "/home/hjahn/AIOBIO_nas/cam2/260205_psf_color_aligned/", #260205 cam2 
-    'SAVE_PATH': "/home/hjahn/mnt/nas/Research/HJA/syn_raw_light_object_gen_cam1-hist-debugging/",
+    'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/260112/psf_color_aligned/", #260219 cam1
+    # 'PSF_DIR': "/home/hjahn/mnt/nas/Grants/25_AIOBIO/experiment/cam2/260205_psf_color_aligned/", #260205 cam2 
+    'SAVE_PATH': "/home/hjahn/mnt/nas/Research/HJA/syn_raw_light_object_gen_cam1/",
     'BATCH_SIZE': 32, 
     'NUM_WORKERS': 12, # 너무 높으면 오히려 CPU 오버헤드 발생 가능, 12~16 권장
     'SCENE_SIZE': (576, 1024),
@@ -142,7 +145,7 @@ def main():
     lbl_files = sorted(glob(os.path.join(HPARAMS['LABEL_PATH'], '*.npz')))
     bg_files = sorted(glob(os.path.join(HPARAMS['BG_PATH'], '*.jpg')))
     # --- [수정 구간] 디버깅을 위해 10장만 선택 ---
-    DEBUG_MODE = True  # 디버깅 모드 플래그
+    DEBUG_MODE = False  # 디버깅 모드 플래그
     if DEBUG_MODE:
         NUM_DEBUG_SAMPLES = 10
         img_files = img_files[:NUM_DEBUG_SAMPLES]

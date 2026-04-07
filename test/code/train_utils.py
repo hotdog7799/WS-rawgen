@@ -81,19 +81,36 @@ def PSNR(img1, img2):
 # def npz_loader(path):
 #     sample = torch.from_numpy(np.load(path)['dmap'])
 #     return sample.float()
-def npz_loader(path):
-    # 1. 파일 로드
-    sample = np.load(path)['dmap']
-    sample = torch.from_numpy(sample).float() # (H, W)
-    
-    # 2. 채널 차원 추가 (H, W) -> (1, H, W)
+def npz_loader(path, center_crop=None, out_size=(512, 512)):
+    """Load depth map from .npz; optionally center-crop then resize to out_size (H, W).
+
+    Match RGB/raw preprocessing: same center_crop and out_size as training transforms.
+    center_crop: square side in pixels (e.g. 384), or None to resize the full map only.
+    """
+    sample = np.load(path)["dmap"]
+    sample = torch.from_numpy(sample).float()
+
     if len(sample.shape) == 2:
         sample = sample.unsqueeze(0)
-    
-    # 3. [핵심] 정답 라벨도 모델 입력과 똑같이 256x256으로 리사이즈
-    # Loss 계산 시 차원을 맞추기 위해 반드시 필요합니다.
-    sample = F.interpolate(sample.unsqueeze(0), size=(512, 512), mode='bilinear', align_corners=False).squeeze(0)
-    
+
+    if center_crop is not None:
+        _, h, w = sample.shape
+        if center_crop > h or center_crop > w:
+            raise ValueError(
+                f"center_crop={center_crop} exceeds depth map size ({h}, {w})"
+            )
+        top = (h - center_crop) // 2
+        left = (w - center_crop) // 2
+        sample = sample[:, top : top + center_crop, left : left + center_crop]
+
+    oh, ow = out_size
+    sample = F.interpolate(
+        sample.unsqueeze(0),
+        size=(oh, ow),
+        mode="bilinear",
+        align_corners=False,
+    ).squeeze(0)
+
     return sample
 
 def npy_loader(path):
